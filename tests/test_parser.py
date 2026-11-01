@@ -78,3 +78,15 @@ def test_empty_events() -> None:
 def test_malformed_payload_raises(payload: dict[str, Any]) -> None:
     with pytest.raises(ParseError):
         parse_dashboard(payload)
+
+
+def test_event_kinds_codes_and_colors(dashboard_json: dict[str, Any]) -> None:
+    events = {e.summary: e for e in parse_dashboard(dashboard_json)}
+    assert (events["Urlaub"].kind, events["Urlaub"].code) == ("absence", "Urlaub")
+    night = events["N003 21:45-06:15"]
+    assert (night.kind, night.code) == ("shift", "N003")
+    # LOGA colours are Windows COLORREF (0x00BBGGRR): 16757675 -> #ABB3FF
+    assert night.color == "#ABB3FF"
+    free = events["FREI Freier Tag, Bewertung nach Freigabe"]
+    assert (free.kind, free.code) == ("free", "FREI")
+    assert events["Urlaub"].color is None

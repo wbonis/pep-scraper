@@ -81,3 +81,55 @@ def test_output_is_private(tmp_path: Path, dashboard_json: dict[str, Any]) -> No
     cli.run(cfg, fetcher=lambda _cfg: dashboard_json)
     assert cfg.output.stat().st_mode & 0o777 == 0o600
     assert [p.name for p in cfg.output.parent.iterdir()] == [cfg.output.name]
+
+
+def _yuvomi_cfg(tmp_path: Path) -> Config:
+    from dataclasses import replace
+
+    from pep_scraper.config import YuvomiConfig
+    from pep_scraper.yuvomi_plan import AbsenceMode
+
+    yuv = YuvomiConfig("https://y.example", "k", 4, AbsenceMode.NEUTRAL)
+    return replace(_config(tmp_path), yuvomi=yuv)
+
+
+def test_run_syncs_yuvomi(tmp_path: Path, dashboard_json: dict[str, Any]) -> None:
+    from contextlib import nullcontext
+
+    from .test_yuvomi_sync import FakeClient
+
+    fake = FakeClient()
+    code = cli.run(
+        _yuvomi_cfg(tmp_path),
+        fetcher=lambda _c: dashboard_json,
+        client_factory=lambda _y: nullcontext(fake),
+    )
+    assert code == 0
+    assert any(c[0] == "put" and c[1] == 4 for c in fake.calls)
+
+
+def test_run_yuvomi_error_exit_code(
+    tmp_path: Path, dashboard_json: dict[str, Any]
+) -> None:
+    from contextlib import nullcontext
+
+    from pep_scraper.yuvomi_client import YuvomiError
+
+    from .test_yuvomi_sync import FakeClient
+
+    class Broken(FakeClient):
+        def list_overrides(self, *_a: Any) -> Any:
+            raise YuvomiError("HTTP 403")
+
+    cfg = _yuvomi_cfg(tmp_path)
+    code = cli.run(
+        cfg,
+        fetcher=lambda _c: dashboard_json,
+        client_factory=lambda _y: nullcontext(Broken()),
+    )
+    assert code == cli.EXIT_YUVOMI
+    assert cfg.output.exists()  # ICS still written
+
+
+def test_dry_run_flag_parsed() -> None:
+    assert cli._parse_args(["--dry-run"]).dry_run is True

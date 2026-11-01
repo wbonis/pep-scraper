@@ -2,6 +2,9 @@
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Literal
+
+EventKind = Literal["shift", "free", "absence"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,3 +21,6 @@ class RosterEvent:
     start: date | datetime
     end: date | datetime
     all_day: bool
+    kind: EventKind = "shift"
+    code: str = ""
+    color: str | None = None

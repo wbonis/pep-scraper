@@ -50,6 +50,8 @@ def _absence(raw: Mapping[str, Any]) -> RosterEvent:
         start=day,
         end=day + timedelta(days=1),
         all_day=True,
+        kind="absence",
+        code=title,
     )
 
 
@@ -60,6 +62,7 @@ def _shift(raw: Mapping[str, Any], shift: Mapping[str, Any], index: int) -> Rost
     summary = f"{code} {shift['name']}".strip()
     uid = _uid("shift", raw["date"], code, str(index))
     description = str(raw.get("title", ""))
+    color = _rgb_from_colorref(shift.get("color"))
     if start == end:
         day = start.date()
         return RosterEvent(
@@ -69,6 +72,9 @@ def _shift(raw: Mapping[str, Any], shift: Mapping[str, Any], index: int) -> Rost
             start=day,
             end=day + timedelta(days=1),
             all_day=True,
+            kind="free",
+            code=code,
+            color=color,
         )
     if end < start:  # night shift: LOGA keeps start date in 'to'
         end = end + timedelta(days=1)
@@ -79,7 +85,18 @@ def _shift(raw: Mapping[str, Any], shift: Mapping[str, Any], index: int) -> Rost
         start=start,
         end=end,
         all_day=False,
+        kind="shift",
+        code=code,
+        color=color,
     )
+
+
+def _rgb_from_colorref(value: Any) -> str | None:
+    """LOGA sends Windows COLORREF ints (0x00BBGGRR); return #RRGGBB."""
+    if not isinstance(value, int) or not 0 <= value <= 0xFFFFFF:
+        return None
+    red, green, blue = value & 0xFF, (value >> 8) & 0xFF, (value >> 16) & 0xFF
+    return f"#{red:02X}{green:02X}{blue:02X}"
 
 
 def _uid(*parts: str) -> str:

@@ -1,0 +1,138 @@
+import json
+from datetime import date
+
+import httpx
+import pytest
+
+from pep_scraper.yuvomi_client import YuvomiClient, YuvomiError
+from pep_scraper.yuvomi_plan import ExistingOverride, ExistingType, ShiftTypeSpec
+
+KEY = "test-key-123"
+
+
+def _client(handler: httpx.MockTransport) -> YuvomiClient:
+    return YuvomiClient("https://y.example", KEY, transport=handler)
+
+
+def test_list_shift_types_sends_api_key() -> None:
+    def handle(req: httpx.Request) -> httpx.Response:
+        assert req.headers["X-API-Key"] == KEY
+        assert req.url.path == "/api/v1/schedule/shift-types"
+        return httpx.Response(
+            200, json={"data": [{"id": 4, "short_code": "U", "name": "Urlaub"}]}
+        )
+
+    assert _client(httpx.MockTransport(handle)).list_shift_types() == (
+        ExistingType(4, "U", "Urlaub"),
+    )
+
+
+def test_create_shift_type_body() -> None:
+    def handle(req: httpx.Request) -> httpx.Response:
+        assert req.method == "POST"
+        assert json.loads(req.content) == {
+            "name": "N003 21:45-06:15",
+            "short_code": "N003",
+            "start_time": "21:45",
+            "end_time": "06:15",
+            "color": "#ABB3FF",
+        }
+        return httpx.Response(201, json={"data": {"id": 11}})
+
+    spec = ShiftTypeSpec("N003", "N003 21:45-06:15", "21:45", "06:15", "#ABB3FF")
+    assert _client(httpx.MockTransport(handle)).create_shift_type(spec) == 11
+
+
+def test_list_overrides_query() -> None:
+    def handle(req: httpx.Request) -> httpx.Response:
+        assert dict(req.url.params) == {
+            "user_id": "4",
+            "from": "2026-11-01",
+            "to": "2026-11-30",
+        }
+        row = {
+            "user_id": 4,
+            "date_key": "2026-11-05",
+            "shift_type_id": None,
+            "note": None,
+        }
+        return httpx.Response(200, json={"data": [row]})
+
+    got = _client(httpx.MockTransport(handle)).list_overrides(
+        4, date(2026, 11, 1), date(2026, 11, 30)
+    )
+    assert got == (ExistingOverride(date(2026, 11, 5), None, ""),)
+
+
+def test_put_and_delete_override() -> None:
+    seen: list[tuple[str, str, object]] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        body = json.loads(req.content) if req.content else dict(req.url.params)
+        seen.append((req.method, req.url.path, body))
+        return httpx.Response(200, json={"data": {}})
+
+    client = _client(httpx.MockTransport(handle))
+    client.put_override(4, date(2026, 11, 5), 7, "pep-scraper")
+    client.delete_override(4, date(2026, 11, 6))
+    assert seen == [
+        (
+            "PUT",
+            "/api/v1/schedule/overrides/2026-11-05",
+            {"user_id": 4, "shift_type_id": 7, "note": "pep-scraper"},
+        ),
+        ("DELETE", "/api/v1/schedule/overrides/2026-11-06", {"user_id": "4"}),
+    ]
+
+
+def test_http_error_raises_without_leaking_key() -> None:
+    def handle(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": "Forbidden.", "code": 403})
+
+    with pytest.raises(YuvomiError, match="403.*Forbidden") as info:
+        _client(httpx.MockTransport(handle)).list_shift_types()
+    assert KEY not in str(info.value)
+
+
+def test_transport_error_wrapped() -> None:
+    def handle(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("boom", request=req)
+
+    with pytest.raises(YuvomiError, match="boom"):
+        _client(httpx.MockTransport(handle)).list_shift_types()
+
+
+def test_list_overrides_drops_other_users() -> None:
+    def handle(_req: httpx.Request) -> httpx.Response:
+        rows = [
+            {
+                "user_id": 4,
+                "date_key": "2026-11-05",
+                "shift_type_id": 1,
+                "note": "pep-scraper",
+            },
+            {
+                "user_id": 3,
+                "date_key": "2026-11-06",
+                "shift_type_id": 1,
+                "note": "pep-scraper",
+            },
+        ]
+        return httpx.Response(200, json={"data": rows})
+
+    got = _client(httpx.MockTransport(handle)).list_overrides(
+        4, date(2026, 11, 1), date(2026, 11, 30)
+    )
+    assert [o.day for o in got] == [date(2026, 11, 5)]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, text="<html>not json</html>"),
+        httpx.Response(200, json={"data": [{"no_id": 1}]}),
+    ],
+)
+def test_malformed_response_raises_yuvomi_error(response: httpx.Response) -> None:
+    with pytest.raises(YuvomiError):
+        _client(httpx.MockTransport(lambda _r: response)).list_shift_types()
