@@ -46,5 +46,5 @@ def _to_vevent(event: RosterEvent, tz: ZoneInfo, stamp: datetime) -> Event:
 
 def _localize(value: date | datetime, tz: ZoneInfo) -> datetime:
     if not isinstance(value, datetime):
-        raise TypeError(f"timed event needs datetime, got {value!r}")
+        raise TypeError(f"Termin mit Uhrzeit braucht datetime, nicht {value!r}")
     return value.replace(tzinfo=tz)

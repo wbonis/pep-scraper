@@ -1,32 +1,33 @@
-"""Entry point: fetch roster, write ICS."""
+"""Einstieg: Dienstplan holen, ICS schreiben, optional nach Yuvomi übertragen."""
 
 import argparse
 import logging
 import os
-import tempfile
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
-from pathlib import Path
 from typing import Any
 
 from dotenv import dotenv_values
 
 from .config import Config, ConfigError, YuvomiConfig, load_config
-from .fetch import FetchError, LoginError, fetch_dashboard
+from .fetch import FetchError, LoginError, PasswordExpiredError, fetch_dashboard
+from .files import write_private_atomic
 from .ics import build_calendar
 from .models import RosterEvent
 from .parser import ParseError, parse_dashboard
+from .state import load_tracked_types, save_tracked_types
 from .yuvomi_client import YuvomiClient, YuvomiError
-from .yuvomi_sync import ScheduleClient, SyncSettings, sync_schedule
+from .yuvomi_sync import ScheduleClient, SyncResult, SyncSettings, sync_schedule
 
 log = logging.getLogger("pep_scraper")
 
 EXIT_OK = 0
-EXIT_CONFIG = 1
-EXIT_LOGIN = 2
-EXIT_FETCH = 3
-EXIT_PARSE = 4
-EXIT_YUVOMI = 5
+EXIT_CONFIG = 1  # .env fehlt oder ist falsch
+EXIT_LOGIN = 2  # Kennung/Kennwort falsch, Captcha, 2FA, Konto gesperrt
+EXIT_FETCH = 3  # Netz, LOGA-Wartung, Dienstplan nicht geladen
+EXIT_PARSE = 4  # LOGA liefert ein unbekanntes Format
+EXIT_YUVOMI = 5  # Übertragung nach Yuvomi fehlgeschlagen
+EXIT_PASSWORD = 6  # LOGA verlangt ein neues Kennwort
 
 Fetcher = Callable[[Config], dict[str, Any]]
 ClientFactory = Callable[[YuvomiConfig], AbstractContextManager[ScheduleClient]]
@@ -44,19 +45,22 @@ def run(
 ) -> int:
     try:
         payload = fetcher(cfg)
+    except PasswordExpiredError as exc:
+        log.error("Kennwort abgelaufen: %s", exc)
+        return EXIT_PASSWORD
     except LoginError as exc:
-        log.error("login failed: %s", exc)
+        log.error("Anmeldung fehlgeschlagen: %s", exc)
         return EXIT_LOGIN
     except FetchError as exc:
-        log.error("fetch failed: %s", exc)
+        log.error("Abruf fehlgeschlagen: %s", exc)
         return EXIT_FETCH
     try:
         events = parse_dashboard(payload)
     except ParseError as exc:
-        log.error("unexpected roster format: %s", exc)
+        log.error("Unerwartetes Dienstplan-Format: %s", exc)
         return EXIT_PARSE
-    _write_atomic(cfg.output, build_calendar(events, cfg.tz_name))
-    log.info("wrote %d events to %s", len(events), cfg.output)
+    write_private_atomic(cfg.output, build_calendar(events, cfg.tz_name))
+    log.info("%d Einträge nach %s geschrieben", len(events), cfg.output)
     if cfg.yuvomi is None:
         return EXIT_OK
     return _sync_yuvomi(cfg.yuvomi, events, dry_run, client_factory)
@@ -69,41 +73,51 @@ def _sync_yuvomi(
     client_factory: ClientFactory,
 ) -> int:
     settings = SyncSettings(user_id=cfg.user_id, absences=cfg.absences)
+    tracked = load_tracked_types(cfg.state_file)
     try:
         with client_factory(cfg) as client:
-            result = sync_schedule(events, client, settings, dry_run=dry_run)
+            result = sync_schedule(events, client, settings, dry_run, tracked)
     except YuvomiError as exc:
-        log.error("yuvomi sync failed: %s", exc)
+        log.error("Yuvomi-Übertragung fehlgeschlagen: %s", exc)
         return EXIT_YUVOMI
-    log.info(
-        "yuvomi%s: %d shift types created, %d days set, %d days removed",
-        " (dry-run)" if dry_run else "",
-        result.created_types,
-        result.updated_days,
-        result.deleted_days,
-    )
+    if not dry_run and result.tracked_type_ids != tracked:
+        save_tracked_types(cfg.state_file, result.tracked_type_ids)
+    _log_summary(result, dry_run)
     return EXIT_OK
 
 
-def _write_atomic(path: Path, data: bytes) -> None:
-    """Write via a private (0600) temp file in the same dir, then rename."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
-    ) as tmp:
-        tmp.write(data)
-    Path(tmp.name).replace(path)
+def _log_summary(result: SyncResult, dry_run: bool) -> None:
+    log.info(
+        "Yuvomi%s: %d Schichttypen angelegt, %d entfernt; %d Tage gesetzt, "
+        "%d entfernt; %d Zusatzdienste angelegt, %d entfernt",
+        " (Probelauf)" if dry_run else "",
+        result.created_types,
+        result.removed_types,
+        result.updated_days,
+        result.deleted_days,
+        result.added_extras,
+        result.deleted_extras,
+    )
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Export LOGA3 PEP roster as ICS")
-    parser.add_argument(
-        "--env-file", default=".env", help="path to .env (default: ./.env)"
+    parser = argparse.ArgumentParser(
+        description="LOGA3-PEP-Dienstplan als ICS exportieren und optional "
+        "nach Yuvomi übertragen",
+        epilog="Exit-Codes: 0 ok, 1 Konfiguration, 2 Anmeldung, 3 Abruf, "
+        "4 Format, 5 Yuvomi, 6 Kennwort abgelaufen",
     )
     parser.add_argument(
-        "--dry-run", action="store_true", help="show Yuvomi changes without writing"
+        "--env-file", default=".env", help="Pfad zur .env (Standard: ./.env)"
     )
-    parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Yuvomi-Änderungen nur anzeigen, nichts schreiben",
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="ausführliche Ausgabe (Debug)"
+    )
     return parser.parse_args(argv)
 
 
@@ -119,6 +133,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         cfg = load_config({**file_env, **os.environ})
     except ConfigError as exc:
-        log.error("%s", exc)
+        log.error("Konfiguration: %s", exc)
         return EXIT_CONFIG
     return run(cfg, fetcher=fetch_dashboard, dry_run=args.dry_run)

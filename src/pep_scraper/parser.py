@@ -21,11 +21,11 @@ class ParseError(ValueError):
 def parse_dashboard(payload: Mapping[str, Any]) -> tuple[RosterEvent, ...]:
     events = payload.get("events")
     if not isinstance(events, list):
-        raise ParseError("payload has no 'events' list")
+        raise ParseError("Antwort enthält keine 'events'-Liste")
     try:
         return tuple(ev for raw in events for ev in _parse_entry(raw))
     except (KeyError, TypeError, ValueError) as exc:
-        raise ParseError(f"malformed entry: {exc!r}") from exc
+        raise ParseError(f"fehlerhafter Eintrag: {exc!r}") from exc
 
 
 def _parse_entry(raw: Mapping[str, Any]) -> Iterator[RosterEvent]:
@@ -36,7 +36,9 @@ def _parse_entry(raw: Mapping[str, Any]) -> Iterator[RosterEvent]:
             yield _shift(raw, shift, index)
     else:
         log.warning(
-            "skipping unknown entry type %r on %s", raw.get("type"), raw.get("date")
+            "überspringe unbekannten Eintragstyp %r am %s",
+            raw.get("type"),
+            raw.get("date"),
         )
 
 

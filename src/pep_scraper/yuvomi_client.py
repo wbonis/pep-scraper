@@ -8,7 +8,7 @@ from typing import Any, Self
 
 import httpx
 
-from .yuvomi_plan import ExistingOverride, ExistingType, ShiftTypeSpec
+from .yuvomi_plan import ExistingExtra, ExistingOverride, ExistingType, ShiftTypeSpec
 
 API = "/api/v1/schedule"
 DEFAULT_TIMEOUT_S = 30.0
@@ -96,14 +96,58 @@ class YuvomiClient:
         params = {"user_id": user_id}
         self._request("DELETE", f"/overrides/{day.isoformat()}", params=params)
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+    def delete_shift_type(self, type_id: int) -> bool:
+        """True when the type is gone, False when Yuvomi still uses it (409)."""
+        response = self._send("DELETE", f"/shift-types/{type_id}")
+        if response.status_code in (404, 409):
+            return response.status_code == 404
+        self._check(response, "DELETE", f"/shift-types/{type_id}")
+        return True
+
+    def list_extras(
+        self, user_id: int, start: date, end: date
+    ) -> tuple[ExistingExtra, ...]:
+        params = {"user_id": user_id, "from": start.isoformat(), "to": end.isoformat()}
+        rows = self._request("GET", "/extras", params=params).get("data", [])
+        with _shape_errors("GET /extras"):
+            return tuple(
+                ExistingExtra(
+                    id=int(r["id"]),
+                    day=date.fromisoformat(r["date_key"]),
+                    shift_type_id=int(r["shift_type_id"]),
+                    note=r.get("note") or "",
+                )
+                for r in rows
+                if r.get("user_id") == user_id
+            )
+
+    def add_extra(self, user_id: int, day: date, type_id: int, note: str) -> None:
+        body = {
+            "user_id": user_id,
+            "date_key": day.isoformat(),
+            "shift_type_id": type_id,
+            "note": note,
+        }
+        self._request("POST", "/extras", json=body)
+
+    def delete_extra(self, extra_id: int) -> None:
+        self._request("DELETE", f"/extras/{extra_id}")
+
+    def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         try:
-            response = self._http.request(method, API + path, **kwargs)
+            return self._http.request(method, API + path, **kwargs)
         except httpx.HTTPError as exc:
             raise YuvomiError(f"{method} {path}: {exc}") from exc
+
+    @staticmethod
+    def _check(response: httpx.Response, method: str, path: str) -> None:
         if response.is_error:
             status, detail = response.status_code, _error_text(response)
             raise YuvomiError(f"{method} {path} -> HTTP {status}: {detail}")
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        response = self._send(method, path, **kwargs)
+        self._check(response, method, path)
         if not response.content:
             return {}
         with _shape_errors(f"{method} {path}"):
@@ -117,7 +161,7 @@ def _shape_errors(call: str) -> Iterator[None]:
     try:
         yield
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
-        raise YuvomiError(f"{call}: unexpected response ({exc!r})") from exc
+        raise YuvomiError(f"{call}: unerwartete Antwort ({exc!r})") from exc
 
 
 def _error_text(response: httpx.Response) -> str:

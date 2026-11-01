@@ -5,7 +5,12 @@ import httpx
 import pytest
 
 from pep_scraper.yuvomi_client import YuvomiClient, YuvomiError
-from pep_scraper.yuvomi_plan import ExistingOverride, ExistingType, ShiftTypeSpec
+from pep_scraper.yuvomi_plan import (
+    ExistingExtra,
+    ExistingOverride,
+    ExistingType,
+    ShiftTypeSpec,
+)
 
 KEY = "test-key-123"
 
@@ -136,3 +141,60 @@ def test_list_overrides_drops_other_users() -> None:
 def test_malformed_response_raises_yuvomi_error(response: httpx.Response) -> None:
     with pytest.raises(YuvomiError):
         _client(httpx.MockTransport(lambda _r: response)).list_shift_types()
+
+
+def test_extras_roundtrip() -> None:
+    seen: list[tuple[str, str]] = []
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen.append((req.method, req.url.path))
+        if req.method == "GET":
+            rows = [
+                {
+                    "id": 9,
+                    "user_id": 4,
+                    "date_key": "2026-11-05",
+                    "shift_type_id": 2,
+                    "note": "pep-scraper",
+                },
+                {
+                    "id": 8,
+                    "user_id": 3,
+                    "date_key": "2026-11-05",
+                    "shift_type_id": 2,
+                    "note": "pep-scraper",
+                },
+            ]
+            return httpx.Response(200, json={"data": rows})
+        if req.method == "POST":
+            assert json.loads(req.content) == {
+                "user_id": 4,
+                "date_key": "2026-11-06",
+                "shift_type_id": 2,
+                "note": "pep-scraper",
+            }
+            return httpx.Response(201, json={"data": {"id": 10}})
+        return httpx.Response(204)
+
+    client = _client(httpx.MockTransport(handle))
+    extras = client.list_extras(4, date(2026, 11, 1), date(2026, 11, 30))
+    assert extras == (ExistingExtra(9, date(2026, 11, 5), 2, "pep-scraper"),)
+    client.add_extra(4, date(2026, 11, 6), 2, "pep-scraper")
+    client.delete_extra(9)
+    assert seen[-1] == ("DELETE", "/api/v1/schedule/extras/9")
+
+
+@pytest.mark.parametrize(("status", "gone"), [(204, True), (404, True), (409, False)])
+def test_delete_shift_type(status: int, gone: bool) -> None:
+    transport = httpx.MockTransport(
+        lambda _r: httpx.Response(status, json={"error": "x"})
+    )
+    assert _client(transport).delete_shift_type(5) is gone
+
+
+def test_delete_shift_type_other_error_raises() -> None:
+    transport = httpx.MockTransport(
+        lambda _r: httpx.Response(500, json={"error": "kaputt"})
+    )
+    with pytest.raises(YuvomiError, match="500"):
+        _client(transport).delete_shift_type(5)

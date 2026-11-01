@@ -17,20 +17,32 @@ LOGIN_HTML = """<!doctype html><html><body>
   <input id="twofatoken" type="text" style="{twofa_style}">
   <input id="captchaInput" type="text" style="{captcha_style}">
   <a id="submit" href="#">ANMELDEN</a>
-  <div id="err"></div>
 </form>
+<div id="message"></div>
+<div id="errorMessage" class="message alert" style="display: none;">
+  <p>Die Kennung bzw. das Kennwort ist falsch!</p></div>
+<div id="loginLocked" class="message alert" style="display: none;">
+  <p>Das System ist aktuell aufgrund von Wartungsarbeiten gesperrt.</p></div>
 <script>
 document.getElementById('submit').addEventListener('click', ev => {{
   ev.preventDefault();
   const u = document.getElementById('username').value;
   const p = document.getElementById('password').value;
-  if (u === 'alice' && p === 's3cret') {{
+  if ({maintenance}) {{
+    document.getElementById('loginLocked').style.display = 'block';
+  }} else if (u === 'alice' && p === 's3cret') {{
     location.href = '/loga3/private/layout?action=afterlogin';
   }} else {{
-    document.getElementById('err').textContent = 'Anmeldung fehlgeschlagen';
+    setTimeout(() => {{
+      document.getElementById('errorMessage').style.display = 'block';
+    }}, 300);
   }}
 }});
 </script></body></html>"""
+
+PASSWORD_CHANGE_HTML = """<!doctype html><html><body>
+<p>Ihr Kennwort ist abgelaufen. Bitte vergeben Sie ein neues Kennwort.</p>
+<input type="password" id="newPwd"></body></html>"""
 
 DASHBOARD_HTML = """<!doctype html><html><body>Dashboard
 <script>
@@ -45,6 +57,8 @@ class FakeOptions:
     captcha_visible: bool = False
     twofa_visible: bool = False
     shift_status: int = 200
+    maintenance: bool = False
+    password_expired: bool = False
 
 
 def _handler(opts: FakeOptions) -> type[BaseHTTPRequestHandler]:
@@ -68,8 +82,11 @@ def _handler(opts: FakeOptions) -> type[BaseHTTPRequestHandler]:
                 html = LOGIN_HTML.format(
                     captcha_style="" if opts.captcha_visible else hidden,
                     twofa_style="" if opts.twofa_visible else hidden,
+                    maintenance="true" if opts.maintenance else "false",
                 )
                 self._send(200, html, "text/html")
+            elif path == "/loga3/private/layout" and opts.password_expired:
+                self._send(200, PASSWORD_CHANGE_HTML, "text/html")
             elif path == "/loga3/private/layout":
                 html = DASHBOARD_HTML.format(shift_path=SHIFT_PATH)
                 self._send(200, html, "text/html")

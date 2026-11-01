@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Abhängigkeiten installieren
+        run: uv sync --locked
+      - name: Chromium für Playwright installieren
+        run: uv run playwright install --with-deps chromium
+      - name: Formatierung prüfen
+        run: |
+          uv run black --check src tests
+          uv run isort --check-only src tests
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Typprüfung
+        run: uv run mypy src tests
+      - name: Sicherheitsprüfung
+        run: uv run bandit -q -r src
+      - name: Tests
+        run: uv run pytest

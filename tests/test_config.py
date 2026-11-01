@@ -109,3 +109,10 @@ def test_url_error_hides_credentials() -> None:
     with pytest.raises(ConfigError) as info:
         load_config({**BASE, "PEP_BASE_URL": "http://user:secret@host.example"})
     assert "secret" not in str(info.value)
+
+
+def test_yuvomi_state_file() -> None:
+    y = load_config({**BASE, **YUV}).yuvomi
+    assert y is not None and y.state_file == Path(".pep-scraper-state.json")
+    y = load_config({**BASE, **YUV, "YUVOMI_STATE_FILE": "/var/lib/pep/s.json"}).yuvomi
+    assert y is not None and y.state_file == Path("/var/lib/pep/s.json")

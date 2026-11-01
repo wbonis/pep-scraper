@@ -20,3 +20,4 @@ wheels/
 .ruff_cache/
 .env.*
 !.env.example
+.pep-scraper-state.json

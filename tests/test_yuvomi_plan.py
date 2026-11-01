@@ -7,6 +7,8 @@ from pep_scraper.yuvomi_plan import (
     MARKER,
     NEUTRAL_ABSENCE,
     AbsenceMode,
+    DayPlan,
+    ExistingExtra,
     ExistingOverride,
     ExistingType,
     ShiftTypeSpec,
@@ -49,12 +51,12 @@ N003 = ShiftTypeSpec("N003", "N003 21:00-06:00", "21:00", "06:00", "#ABB3FF")
 
 def test_shift_becomes_spec_with_times_and_color() -> None:
     days = desired_days((_shift(5),), AbsenceMode.NEUTRAL)
-    assert days == {date(2026, 11, 5): N003}
+    assert days == {date(2026, 11, 5): DayPlan(N003, ())}
 
 
 def test_free_day_is_none() -> None:
     days = desired_days((_all_day(3, "free", "FREI x"),), AbsenceMode.NEUTRAL)
-    assert days == {date(2026, 11, 3): None}
+    assert days == {date(2026, 11, 3): DayPlan(None, ())}
 
 
 @pytest.mark.parametrize(
@@ -69,7 +71,7 @@ def test_free_day_is_none() -> None:
 )
 def test_absence_wins_over_shift(mode: AbsenceMode, expected: ShiftTypeSpec) -> None:
     events = (_shift(1), _all_day(1, "absence", "Krank mit EFZ"))
-    assert desired_days(events, mode) == {date(2026, 11, 1): expected}
+    assert desired_days(events, mode) == {date(2026, 11, 1): DayPlan(expected, ())}
 
 
 def test_skip_mode_leaves_absence_day_out() -> None:
@@ -86,7 +88,7 @@ def test_resolve_type_by_code_then_name() -> None:
 
 
 def test_plan_creates_missing_types_once() -> None:
-    plan = plan_schedule((_shift(5), _shift(6)), (), (), AbsenceMode.NEUTRAL)
+    plan = plan_schedule((_shift(5), _shift(6)), (), (), (), AbsenceMode.NEUTRAL)
     assert plan.create_types == (N003,)
     assert [a.day for a in plan.put] == [date(2026, 11, 5), date(2026, 11, 6)]
 
@@ -94,14 +96,14 @@ def test_plan_creates_missing_types_once() -> None:
 def test_plan_skips_unchanged_own_override() -> None:
     types = (ExistingType(7, "N003", "x"),)
     overrides = (ExistingOverride(date(2026, 11, 5), 7, MARKER),)
-    plan = plan_schedule((_shift(5),), types, overrides, AbsenceMode.NEUTRAL)
+    plan = plan_schedule((_shift(5),), types, overrides, (), AbsenceMode.NEUTRAL)
     assert plan.put == () and plan.delete == () and plan.create_types == ()
 
 
 def test_plan_overwrites_manual_override_on_roster_day() -> None:
     types = (ExistingType(7, "N003", "x"),)
     overrides = (ExistingOverride(date(2026, 11, 5), 7, "von Hand"),)
-    plan = plan_schedule((_shift(5),), types, overrides, AbsenceMode.NEUTRAL)
+    plan = plan_schedule((_shift(5),), types, overrides, (), AbsenceMode.NEUTRAL)
     assert [a.day for a in plan.put] == [date(2026, 11, 5)]
 
 
@@ -112,13 +114,13 @@ def test_plan_deletes_only_own_stale_overrides_in_window() -> None:
         ExistingOverride(date(2026, 11, 8), 7, "manuell"),  # manual -> keep
         ExistingOverride(date(2026, 11, 20), 7, MARKER),  # outside window -> keep
     )
-    plan = plan_schedule(events, (), overrides, AbsenceMode.NEUTRAL)
+    plan = plan_schedule(events, (), overrides, (), AbsenceMode.NEUTRAL)
     assert plan.delete == (date(2026, 11, 7),)
 
 
 def test_plan_empty_roster_changes_nothing() -> None:
     overrides = (ExistingOverride(date(2026, 11, 7), 7, MARKER),)
-    plan = plan_schedule((), (), overrides, AbsenceMode.NEUTRAL)
+    plan = plan_schedule((), (), overrides, (), AbsenceMode.NEUTRAL)
     assert plan.is_empty
 
 
@@ -133,3 +135,55 @@ def test_plan_empty_roster_changes_nothing() -> None:
 )
 def test_marker_matches_exactly(note: str, ours: bool) -> None:
     assert ExistingOverride(date(2026, 11, 1), None, note).is_ours is ours
+
+
+D5 = date(2026, 11, 5)
+S1 = ShiftTypeSpec("S1", "S1 06:00-10:00", "06:00", "10:00", "#ABB3FF")
+S2 = ShiftTypeSpec("S2", "S2 16:00-20:00", "16:00", "20:00", "#ABB3FF")
+
+
+def test_second_shift_same_day_becomes_extra() -> None:
+    events = (_shift(5, "S2", 16, 20), _shift(5, "S1", 6, 10))
+    assert desired_days(events, AbsenceMode.NEUTRAL) == {D5: DayPlan(S1, (S2,))}
+
+
+def test_absence_day_has_no_extras() -> None:
+    events = (
+        _shift(5, "S1", 6, 10),
+        _shift(5, "S2", 16, 20),
+        _all_day(5, "absence", "K"),
+    )
+    assert desired_days(events, AbsenceMode.NEUTRAL)[D5].extras == ()
+
+
+def test_plan_adds_missing_extra_and_creates_its_type() -> None:
+    events = (_shift(5, "S1", 6, 10), _shift(5, "S2", 16, 20))
+    plan = plan_schedule(events, (), (), (), AbsenceMode.NEUTRAL)
+    assert plan.create_types == (S1, S2)
+    assert [(a.day, a.spec) for a in plan.add_extras] == [(D5, S2)]
+
+
+def test_plan_keeps_matching_extra_and_deletes_only_own_stale_extras() -> None:
+    types = (ExistingType(1, "S1", "x"), ExistingType(2, "S2", "y"))
+    events = (_shift(5, "S1", 6, 10), _shift(5, "S2", 16, 20), _shift(7, "S1", 6, 10))
+    extras = (
+        ExistingExtra(10, D5, 2, MARKER),  # matches S2 -> keep
+        ExistingExtra(11, D5, 2, MARKER),  # duplicate -> delete
+        ExistingExtra(12, date(2026, 11, 6), 2, MARKER),  # day gone -> delete
+        ExistingExtra(13, date(2026, 11, 6), 2, "von Hand"),  # manual -> keep
+        ExistingExtra(14, date(2026, 11, 30), 2, MARKER),  # outside window -> keep
+    )
+    plan = plan_schedule(events, types, (), extras, AbsenceMode.NEUTRAL)
+    assert plan.add_extras == ()
+    assert plan.delete_extras == (11, 12)
+
+
+def test_used_type_ids_cover_primary_and_extras() -> None:
+    types = (
+        ExistingType(1, "S1", "x"),
+        ExistingType(2, "S2", "y"),
+        ExistingType(3, "Z", "z"),
+    )
+    events = (_shift(5, "S1", 6, 10), _shift(5, "S2", 16, 20))
+    plan = plan_schedule(events, types, (), (), AbsenceMode.NEUTRAL)
+    assert plan.used_type_ids == frozenset({1, 2})

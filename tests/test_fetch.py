@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,8 @@ from pep_scraper.fetch import (
     CaptchaRequiredError,
     FetchError,
     LoginError,
+    MaintenanceError,
+    PasswordExpiredError,
     TwoFactorRequiredError,
     fetch_dashboard,
 )
@@ -34,9 +37,32 @@ def test_fetch_returns_shift_json(dashboard_json: dict[str, Any]) -> None:
         assert fetch_dashboard(_cfg(url)) == dashboard_json
 
 
-def test_wrong_password_raises_login_error(dashboard_json: dict[str, Any]) -> None:
-    with serve(FakeOptions(payload=dashboard_json)) as url, pytest.raises(LoginError):
+def test_wrong_password_fails_fast_with_loga_text(
+    dashboard_json: dict[str, Any],
+) -> None:
+    started = time.monotonic()
+    with (
+        serve(FakeOptions(payload=dashboard_json)) as url,
+        pytest.raises(LoginError, match="Kennwort ist falsch"),
+    ):
         fetch_dashboard(_cfg(url, password="wrong"))
+    assert time.monotonic() - started < 4  # no waiting for the 5 s timeout
+
+
+def test_maintenance_lock_is_not_a_login_error(dashboard_json: dict[str, Any]) -> None:
+    with (
+        serve(FakeOptions(payload=dashboard_json, maintenance=True)) as url,
+        pytest.raises(MaintenanceError, match="Wartungsarbeiten"),
+    ):
+        fetch_dashboard(_cfg(url))
+
+
+def test_password_change_prompt_raises(dashboard_json: dict[str, Any]) -> None:
+    with (
+        serve(FakeOptions(payload=dashboard_json, password_expired=True)) as url,
+        pytest.raises(PasswordExpiredError),
+    ):
+        fetch_dashboard(_cfg(url))
 
 
 def test_visible_captcha_raises(dashboard_json: dict[str, Any]) -> None:

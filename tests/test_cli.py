@@ -133,3 +133,43 @@ def test_run_yuvomi_error_exit_code(
 
 def test_dry_run_flag_parsed() -> None:
     assert cli._parse_args(["--dry-run"]).dry_run is True
+
+
+def test_run_password_expired_exit_code(tmp_path: Path) -> None:
+    from pep_scraper.fetch import PasswordExpiredError
+
+    def expired(_cfg: Config) -> dict[str, Any]:
+        raise PasswordExpiredError("neues Kennwort")
+
+    assert cli.run(_config(tmp_path), fetcher=expired) == cli.EXIT_PASSWORD == 6
+
+
+def test_run_maintenance_is_fetch_error(tmp_path: Path) -> None:
+    from pep_scraper.fetch import MaintenanceError
+
+    def locked(_cfg: Config) -> dict[str, Any]:
+        raise MaintenanceError("Wartung")
+
+    assert cli.run(_config(tmp_path), fetcher=locked) == cli.EXIT_FETCH
+
+
+def test_run_persists_created_type_ids(
+    tmp_path: Path, dashboard_json: dict[str, Any]
+) -> None:
+    from contextlib import nullcontext
+    from dataclasses import replace
+
+    from pep_scraper.state import load_tracked_types
+
+    from .test_yuvomi_sync import FakeClient
+
+    cfg = _yuvomi_cfg(tmp_path)
+    assert cfg.yuvomi is not None
+    state = tmp_path / "state.json"
+    cfg = replace(cfg, yuvomi=replace(cfg.yuvomi, state_file=state))
+    cli.run(
+        cfg,
+        fetcher=lambda _c: dashboard_json,
+        client_factory=lambda _y: nullcontext(FakeClient()),
+    )
+    assert load_tracked_types(state)  # ids of created shift types remembered

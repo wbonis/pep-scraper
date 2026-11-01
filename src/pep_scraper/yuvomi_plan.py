@@ -1,8 +1,9 @@
 """Pure planning: roster events -> changes for the Yuvomi shift schedule.
 
-One entry per day and person (Yuvomi "override"). LOGA wins on every roster
-day, also over a manual entry. Days written by this tool carry exactly
-``MARKER`` as note; stale-day cleanup deletes only those, so manual entries on
+One entry per day and person (Yuvomi "override") for the first shift; further
+shifts on the same day become Yuvomi "extras". LOGA wins on every roster day,
+also over a manual entry. Entries written by this tool carry exactly
+``MARKER`` as note; stale cleanup deletes only those, so manual entries on
 days LOGA does not cover stay untouched.
 """
 
@@ -60,6 +61,26 @@ class ExistingOverride:
 
 
 @dataclass(frozen=True, slots=True)
+class ExistingExtra:
+    """Additional shift on a day (Yuvomi "extra"), addressed by id."""
+
+    id: int
+    day: date
+    shift_type_id: int
+    note: str
+
+    @property
+    def is_ours(self) -> bool:
+        return self.note.strip() == MARKER
+
+
+@dataclass(frozen=True, slots=True)
+class DayPlan:
+    primary: ShiftTypeSpec | None  # None = explicit day off
+    extras: tuple[ShiftTypeSpec, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class DayAssignment:
     day: date
     spec: ShiftTypeSpec | None  # None = explicit day off
@@ -70,10 +91,19 @@ class SchedulePlan:
     create_types: tuple[ShiftTypeSpec, ...]
     put: tuple[DayAssignment, ...]
     delete: tuple[date, ...]
+    add_extras: tuple[DayAssignment, ...] = ()
+    delete_extras: tuple[int, ...] = ()
+    used_type_ids: frozenset[int] = frozenset()
 
     @property
     def is_empty(self) -> bool:
-        return not (self.create_types or self.put or self.delete)
+        return not (
+            self.create_types
+            or self.put
+            or self.delete
+            or self.add_extras
+            or self.delete_extras
+        )
 
 
 def event_day(event: RosterEvent) -> date:
@@ -89,11 +119,11 @@ def roster_window(events: Iterable[RosterEvent]) -> tuple[date, date] | None:
 
 def desired_days(
     events: Iterable[RosterEvent], mode: AbsenceMode
-) -> dict[date, ShiftTypeSpec | None]:
+) -> dict[date, DayPlan]:
     by_day: dict[date, list[RosterEvent]] = {}
     for event in events:
         by_day.setdefault(event_day(event), []).append(event)
-    result: dict[date, ShiftTypeSpec | None] = {}
+    result: dict[date, DayPlan] = {}
     for day in sorted(by_day):
         day_events = by_day[day]
         has_absence = any(e.kind == "absence" for e in day_events)
@@ -103,19 +133,21 @@ def desired_days(
     return result
 
 
-def _choose(events: list[RosterEvent], mode: AbsenceMode) -> ShiftTypeSpec | None:
-    """Absence beats shift beats free day."""
+def _choose(events: list[RosterEvent], mode: AbsenceMode) -> DayPlan:
+    """Absence beats shifts beat free day. First shift is primary, rest extras."""
     absences = [e for e in events if e.kind == "absence"]
     if absences:
         if mode is AbsenceMode.NEUTRAL:
-            return NEUTRAL_ABSENCE
-        return ShiftTypeSpec(
+            return DayPlan(NEUTRAL_ABSENCE, ())
+        reason = ShiftTypeSpec(
             None, absences[0].summary, None, None, ABSENCE_COLOR, ABSENCE_ICON
         )
+        return DayPlan(reason, ())
     shifts = sorted((e for e in events if e.kind == "shift"), key=lambda e: e.start)
     if shifts:
-        return _shift_spec(shifts[0])
-    return None
+        specs = tuple(_shift_spec(e) for e in shifts)
+        return DayPlan(specs[0], specs[1:])
+    return DayPlan(None, ())
 
 
 def _shift_spec(event: RosterEvent) -> ShiftTypeSpec:
@@ -153,6 +185,7 @@ def plan_schedule(
     events: Iterable[RosterEvent],
     existing_types: Iterable[ExistingType],
     existing_overrides: Iterable[ExistingOverride],
+    existing_extras: Iterable[ExistingExtra],
     mode: AbsenceMode,
 ) -> SchedulePlan:
     events = tuple(events)
@@ -162,30 +195,45 @@ def plan_schedule(
     types = tuple(existing_types)
     overrides = {o.day: o for o in existing_overrides}
     desired = desired_days(events, mode)
+    specs = tuple(_all_specs(desired.values()))
+    add_extras, delete_extras = _extra_changes(desired, types, existing_extras, window)
     return SchedulePlan(
-        create_types=_missing_types(desired.values(), types),
+        create_types=_missing_types(specs, types),
         put=_changed_days(desired, types, overrides),
         delete=_stale_days(desired, overrides, window),
+        add_extras=add_extras,
+        delete_extras=delete_extras,
+        used_type_ids=frozenset(
+            tid for spec in specs if (tid := resolve_type_id(spec, types)) is not None
+        ),
     )
 
 
+def _all_specs(days: Iterable[DayPlan]) -> Iterable[ShiftTypeSpec]:
+    for day in days:
+        if day.primary is not None:
+            yield day.primary
+        yield from day.extras
+
+
 def _missing_types(
-    specs: Iterable[ShiftTypeSpec | None], types: tuple[ExistingType, ...]
+    specs: Iterable[ShiftTypeSpec], types: tuple[ExistingType, ...]
 ) -> tuple[ShiftTypeSpec, ...]:
     missing: dict[str, ShiftTypeSpec] = {}
     for spec in specs:
-        if spec is not None and resolve_type_id(spec, types) is None:
+        if resolve_type_id(spec, types) is None:
             missing.setdefault(type_key(spec), spec)
     return tuple(missing.values())
 
 
 def _changed_days(
-    desired: Mapping[date, ShiftTypeSpec | None],
+    desired: Mapping[date, DayPlan],
     types: tuple[ExistingType, ...],
     overrides: Mapping[date, ExistingOverride],
 ) -> tuple[DayAssignment, ...]:
     changed = []
-    for day, spec in desired.items():
+    for day, plan in desired.items():
+        spec = plan.primary
         current = overrides.get(day)
         wanted_id = None if spec is None else resolve_type_id(spec, types)
         unchanged = (
@@ -200,7 +248,7 @@ def _changed_days(
 
 
 def _stale_days(
-    desired: Mapping[date, ShiftTypeSpec | None],
+    desired: Mapping[date, DayPlan],
     overrides: Mapping[date, ExistingOverride],
     window: tuple[date, date],
 ) -> tuple[date, ...]:
@@ -210,3 +258,31 @@ def _stale_days(
         for day, override in sorted(overrides.items())
         if override.is_ours and first <= day <= last and day not in desired
     )
+
+
+def _extra_changes(
+    desired: Mapping[date, DayPlan],
+    types: tuple[ExistingType, ...],
+    existing: Iterable[ExistingExtra],
+    window: tuple[date, date],
+) -> tuple[tuple[DayAssignment, ...], tuple[int, ...]]:
+    """Match wanted extras against our own existing ones, day by day."""
+    first, last = window
+    ours: dict[date, list[ExistingExtra]] = {}
+    for extra in existing:
+        if extra.is_ours and first <= extra.day <= last:
+            ours.setdefault(extra.day, []).append(extra)
+    to_add: list[DayAssignment] = []
+    to_delete: list[int] = []
+    for day in sorted(set(desired) | set(ours)):
+        wanted = desired[day].extras if day in desired else ()
+        leftover = list(ours.get(day, ()))
+        for spec in wanted:
+            type_id = resolve_type_id(spec, types)
+            match = next((e for e in leftover if e.shift_type_id == type_id), None)
+            if match is None:
+                to_add.append(DayAssignment(day, spec))
+            else:
+                leftover.remove(match)
+        to_delete.extend(e.id for e in leftover)
+    return tuple(to_add), tuple(to_delete)
