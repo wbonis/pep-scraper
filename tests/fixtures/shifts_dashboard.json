@@ -1,0 +1,81 @@
+{
+  "activeVertnrs": [1],
+  "selectedVertnr": 1,
+  "widgetPeriod2LoadInDaysSPEP": 90,
+  "events": [
+    {
+      "absence": true,
+      "afternoon": false,
+      "date": "2026-11-01",
+      "noon": false,
+      "title": "Urlaub"
+    },
+    {
+      "absence": false,
+      "antrag": false,
+      "date": "2026-11-01",
+      "objektId": "1000.01",
+      "objektMan": "XYZ",
+      "shifts": [
+        {
+          "code": "N003",
+          "color": 16757675,
+          "from": "2026-11-01T21:45:00",
+          "name": "21:45-06:15",
+          "to": "2026-11-01T06:15:00"
+        }
+      ],
+      "title": "Abteilung A → Station 1",
+      "type": "SPEP_PLAN"
+    },
+    {
+      "absence": false,
+      "antrag": false,
+      "date": "2026-11-03",
+      "objektId": "1000.01",
+      "objektMan": "XYZ",
+      "shifts": [
+        {
+          "code": "FREI",
+          "color": 10592673,
+          "from": "2026-11-03T00:00:00",
+          "name": "Freier Tag, Bewertung nach Freigabe",
+          "to": "2026-11-03T00:00:00"
+        }
+      ],
+      "title": "Abteilung A → Station 1",
+      "type": "SPEP_PLAN"
+    },
+    {
+      "absence": false,
+      "antrag": false,
+      "date": "2026-11-05",
+      "objektId": "1000.01",
+      "objektMan": "XYZ",
+      "shifts": [
+        {
+          "code": "S001",
+          "color": 11206570,
+          "from": "2026-11-05T13:45:00",
+          "name": "13:45-22:15",
+          "to": "2026-11-05T22:15:00"
+        }
+      ],
+      "title": "Abteilung A → Station 1",
+      "type": "SPEP_PLAN"
+    },
+    {
+      "absence": false,
+      "date": "2026-11-07",
+      "title": "Unbekannter Eintrag",
+      "type": "SOMETHING_NEW"
+    },
+    {
+      "absence": true,
+      "afternoon": false,
+      "date": "2027-01-29",
+      "noon": false,
+      "title": "Fortbildung"
+    }
+  ]
+}
