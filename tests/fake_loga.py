@@ -47,7 +47,7 @@ PASSWORD_CHANGE_HTML = """<!doctype html><html><body>
 DASHBOARD_HTML = """<!doctype html><html><body>Dashboard
 <script>
 fetch('/loga3/private/api/dashboard/common/loadSetting?xsrf=abc');
-fetch('{shift_path}?millis=1&xsrf=abc&securityId=LPEWPMAL');
+fetch('{shift_path}?millis=1&xsrf=abc&securityId=TESTID');
 </script></body></html>"""
 
 

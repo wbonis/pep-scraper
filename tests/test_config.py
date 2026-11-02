@@ -17,6 +17,7 @@ def test_defaults() -> None:
         headless=True,
         timeout_ms=60_000,
         tz_name="Europe/Berlin",
+        names_file=Path("schichten.toml"),
     )
 
 
@@ -116,3 +117,19 @@ def test_yuvomi_state_file() -> None:
     assert y is not None and y.state_file == Path(".pep-scraper-state.json")
     y = load_config({**BASE, **YUV, "YUVOMI_STATE_FILE": "/var/lib/pep/s.json"}).yuvomi
     assert y is not None and y.state_file == Path("/var/lib/pep/s.json")
+
+
+def test_names_file_override() -> None:
+    assert load_config(
+        {**BASE, "PEP_NAMES_FILE": "/etc/pep/n.toml"}
+    ).names_file == Path("/etc/pep/n.toml")
+
+
+def test_absence_mode_hidden() -> None:
+    y = load_config({**BASE, **YUV, "YUVOMI_ABSENCES": "hidden"}).yuvomi
+    assert y is not None and y.absences.value == "hidden"
+
+
+def test_url_with_credentials_rejected() -> None:
+    with pytest.raises(ConfigError, match="Zugangsdaten"):
+        load_config({**BASE, "PEP_BASE_URL": "https://user:pw@host.example"})

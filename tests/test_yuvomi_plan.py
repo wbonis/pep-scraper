@@ -187,3 +187,78 @@ def test_used_type_ids_cover_primary_and_extras() -> None:
     events = (_shift(5, "S1", 6, 10), _shift(5, "S2", 16, 20))
     plan = plan_schedule(events, types, (), (), AbsenceMode.NEUTRAL)
     assert plan.used_type_ids == frozenset({1, 2})
+
+
+def test_neutral_shows_non_health_absence_with_title() -> None:
+    days = desired_days(
+        (_all_day(16, "absence", "Fachweiterbildung"),), AbsenceMode.NEUTRAL
+    )
+    spec = days[date(2026, 11, 16)].primary
+    assert spec == ShiftTypeSpec(
+        None, "Fachweiterbildung", None, None, "#78808C", "calendar-off"
+    )
+
+
+def test_hidden_mode_hides_every_reason() -> None:
+    days = desired_days((_all_day(16, "absence", "Urlaub"),), AbsenceMode.HIDDEN)
+    assert days[date(2026, 11, 16)].primary == NEUTRAL_ABSENCE
+
+
+def test_health_check_uses_original_title_not_mapped_name() -> None:
+    from dataclasses import replace
+
+    sick = replace(_all_day(16, "absence", "Krank mit EFZ"), summary="Frei")
+    days = desired_days((sick,), AbsenceMode.NEUTRAL)
+    assert days[date(2026, 11, 16)].primary == NEUTRAL_ABSENCE
+
+
+def test_shift_icon_passed_to_spec() -> None:
+    from dataclasses import replace
+
+    night = replace(_shift(5), summary="Nachtdienst", icon="moon")
+    spec = desired_days((night,), AbsenceMode.NEUTRAL)[date(2026, 11, 5)].primary
+    assert spec is not None and (spec.name, spec.icon) == ("Nachtdienst", "moon")
+
+
+def test_plan_renames_only_own_types() -> None:
+    from dataclasses import replace
+
+    types = (
+        ExistingType(10, "N003", "N003 21:00-06:00", None),
+        ExistingType(9, "S1", "Frühschicht von Hand", None),
+    )
+    events = (
+        replace(_shift(5), summary="Nachtdienst", icon="moon"),
+        replace(_shift(6, "S1", 6, 10), summary="Frühdienst", icon="sunrise"),
+    )
+    plan = plan_schedule(
+        events, types, (), (), AbsenceMode.NEUTRAL, own_type_ids=frozenset({10})
+    )
+    assert [(tid, spec.name, spec.icon) for tid, spec in plan.update_types] == [
+        (10, "Nachtdienst", "moon")
+    ]
+
+
+def test_plan_no_rename_when_equal() -> None:
+    types = (ExistingType(10, "N003", "N003 21:00-06:00", None),)
+    plan = plan_schedule(
+        (_shift(5),), types, (), (), AbsenceMode.NEUTRAL, own_type_ids=frozenset({10})
+    )
+    assert plan.update_types == ()
+
+
+def test_neutral_hides_unknown_absence_titles() -> None:
+    days = desired_days(
+        (_all_day(16, "absence", "Wiedervorstellung XY"),), AbsenceMode.NEUTRAL
+    )
+    assert days[date(2026, 11, 16)].primary == NEUTRAL_ABSENCE
+
+
+def test_neutral_shows_absence_named_in_file() -> None:
+    days = desired_days(
+        (_all_day(16, "absence", "Wiedervorstellung XY"),),
+        AbsenceMode.NEUTRAL,
+        shown_absences=frozenset({"Wiedervorstellung XY"}),
+    )
+    spec = days[date(2026, 11, 16)].primary
+    assert spec is not None and spec.name == "Wiedervorstellung XY"

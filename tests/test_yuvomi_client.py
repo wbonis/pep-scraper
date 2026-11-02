@@ -23,12 +23,17 @@ def test_list_shift_types_sends_api_key() -> None:
     def handle(req: httpx.Request) -> httpx.Response:
         assert req.headers["X-API-Key"] == KEY
         assert req.url.path == "/api/v1/schedule/shift-types"
-        return httpx.Response(
-            200, json={"data": [{"id": 4, "short_code": "U", "name": "Urlaub"}]}
-        )
+        row = {
+            "id": 4,
+            "short_code": "U",
+            "name": "Urlaub",
+            "icon": "palmtree",
+            "created_at": "2026-10-26T21:14:59Z",
+        }
+        return httpx.Response(200, json={"data": [row]})
 
     assert _client(httpx.MockTransport(handle)).list_shift_types() == (
-        ExistingType(4, "U", "Urlaub"),
+        ExistingType(4, "U", "Urlaub", "palmtree", "2026-10-26T21:14:59Z"),
     )
 
 
@@ -42,10 +47,33 @@ def test_create_shift_type_body() -> None:
             "end_time": "06:15",
             "color": "#ABB3FF",
         }
-        return httpx.Response(201, json={"data": {"id": 11}})
+        return httpx.Response(
+            201,
+            json={
+                "data": {
+                    "id": 11,
+                    "short_code": "N003",
+                    "name": "N003 21:45-06:15",
+                    "icon": None,
+                    "created_at": "2026-11-01T23:28:24Z",
+                }
+            },
+        )
 
     spec = ShiftTypeSpec("N003", "N003 21:45-06:15", "21:45", "06:15", "#ABB3FF")
-    assert _client(httpx.MockTransport(handle)).create_shift_type(spec) == 11
+    assert _client(httpx.MockTransport(handle)).create_shift_type(spec) == ExistingType(
+        11, "N003", "N003 21:45-06:15", None, "2026-11-01T23:28:24Z"
+    )
+
+
+def test_update_shift_type_body() -> None:
+    def handle(req: httpx.Request) -> httpx.Response:
+        assert (req.method, req.url.path) == ("PUT", "/api/v1/schedule/shift-types/7")
+        assert json.loads(req.content) == {"name": "Nachtdienst", "icon": "moon"}
+        return httpx.Response(200, json={"data": {}})
+
+    spec = ShiftTypeSpec("N003", "Nachtdienst", "21:45", "06:15", "#ABB3FF", "moon")
+    _client(httpx.MockTransport(handle)).update_shift_type(7, spec)
 
 
 def test_list_overrides_query() -> None:

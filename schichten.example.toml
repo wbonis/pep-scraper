@@ -1,0 +1,26 @@
+# Lesbare Namen für LOGA-Dienstcodes und Abwesenheiten.
+# Kopieren nach schichten.toml (PEP_NAMES_FILE) und anpassen.
+# Schlüssel = LOGA-Code (z. B. S006) oder Abwesenheitstitel (in Anführungszeichen).
+# icon = optional, ein Lucide-Iconname (https://lucide.dev/icons), z. B. sunrise, sunset, moon.
+# Ohne Eintrag gilt die Faustregel: F.. Frühdienst, S.. Spätdienst, N.. Nachtdienst.
+
+[F013]
+name = "Frühdienst"
+icon = "sunrise"
+
+[S006]
+name = "Spätdienst"
+icon = "sunset"
+
+[ZD015]
+name = "Früher Spätdienst"
+icon = "sunset"
+
+[N003]
+name = "Nachtdienst"
+icon = "moon"
+
+# Beispiel für eine Abwesenheit:
+# ["Fachweiterbildung"]
+# name = "Schule"
+# icon = "graduation-cap"

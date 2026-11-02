@@ -7,12 +7,16 @@ also over a manual entry. Entries written by this tool carry exactly
 days LOGA does not cover stay untouched.
 """
 
+import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 
 from .models import RosterEvent
+from .naming import is_health_reason, is_shown_absence
+
+log = logging.getLogger(__name__)
 
 MARKER = "pep-scraper"
 DEFAULT_COLOR = "#0891B2"
@@ -22,7 +26,8 @@ MAX_SHORT_CODE = 12
 
 
 class AbsenceMode(Enum):
-    NEUTRAL = "neutral"  # every absence as "Abwesend", reason hidden
+    NEUTRAL = "neutral"  # harmless/named titles shown, everything else "Abwesend"
+    HIDDEN = "hidden"  # every absence as "Abwesend"
     DETAIL = "detail"  # one shift type per reason (Urlaub, Krank, ...)
     SKIP = "skip"  # absence days are not written
 
@@ -47,6 +52,8 @@ class ExistingType:
     id: int
     short_code: str | None
     name: str
+    icon: str | None = None
+    created_at: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,11 +101,13 @@ class SchedulePlan:
     add_extras: tuple[DayAssignment, ...] = ()
     delete_extras: tuple[int, ...] = ()
     used_type_ids: frozenset[int] = frozenset()
+    update_types: tuple[tuple[int, ShiftTypeSpec], ...] = ()
 
     @property
     def is_empty(self) -> bool:
         return not (
             self.create_types
+            or self.update_types
             or self.put
             or self.delete
             or self.add_extras
@@ -118,7 +127,9 @@ def roster_window(events: Iterable[RosterEvent]) -> tuple[date, date] | None:
 
 
 def desired_days(
-    events: Iterable[RosterEvent], mode: AbsenceMode
+    events: Iterable[RosterEvent],
+    mode: AbsenceMode,
+    shown_absences: frozenset[str] = frozenset(),
 ) -> dict[date, DayPlan]:
     by_day: dict[date, list[RosterEvent]] = {}
     for event in events:
@@ -129,25 +140,40 @@ def desired_days(
         has_absence = any(e.kind == "absence" for e in day_events)
         if has_absence and mode is AbsenceMode.SKIP:
             continue
-        result[day] = _choose(day_events, mode)
+        result[day] = _choose(day_events, mode, shown_absences)
     return result
 
 
-def _choose(events: list[RosterEvent], mode: AbsenceMode) -> DayPlan:
+def _choose(
+    events: list[RosterEvent], mode: AbsenceMode, shown_absences: frozenset[str]
+) -> DayPlan:
     """Absence beats shifts beat free day. First shift is primary, rest extras."""
     absences = [e for e in events if e.kind == "absence"]
     if absences:
-        if mode is AbsenceMode.NEUTRAL:
-            return DayPlan(NEUTRAL_ABSENCE, ())
-        reason = ShiftTypeSpec(
-            None, absences[0].summary, None, None, ABSENCE_COLOR, ABSENCE_ICON
-        )
-        return DayPlan(reason, ())
+        return DayPlan(_absence_spec(absences[0], mode, shown_absences), ())
     shifts = sorted((e for e in events if e.kind == "shift"), key=lambda e: e.start)
     if shifts:
         specs = tuple(_shift_spec(e) for e in shifts)
         return DayPlan(specs[0], specs[1:])
     return DayPlan(None, ())
+
+
+def _absence_spec(
+    event: RosterEvent, mode: AbsenceMode, shown_absences: frozenset[str]
+) -> ShiftTypeSpec:
+    hide = mode is AbsenceMode.HIDDEN or (
+        mode is AbsenceMode.NEUTRAL and not is_shown_absence(event.code, shown_absences)
+    )
+    if hide:
+        if mode is AbsenceMode.NEUTRAL and not is_health_reason(event.code):
+            log.info(
+                "Abwesenheit %r als 'Abwesend' eingetragen - in schichten.toml "
+                "eintragen, um den Titel zu zeigen",
+                event.code,
+            )
+        return NEUTRAL_ABSENCE
+    icon = event.icon or ABSENCE_ICON
+    return ShiftTypeSpec(None, event.summary, None, None, ABSENCE_COLOR, icon)
 
 
 def _shift_spec(event: RosterEvent) -> ShiftTypeSpec:
@@ -159,6 +185,7 @@ def _shift_spec(event: RosterEvent) -> ShiftTypeSpec:
         start_time=event.start.strftime("%H:%M"),
         end_time=event.end.strftime("%H:%M"),
         color=event.color or DEFAULT_COLOR,
+        icon=event.icon,
     )
 
 
@@ -187,6 +214,8 @@ def plan_schedule(
     existing_overrides: Iterable[ExistingOverride],
     existing_extras: Iterable[ExistingExtra],
     mode: AbsenceMode,
+    own_type_ids: frozenset[int] = frozenset(),
+    shown_absences: frozenset[str] = frozenset(),
 ) -> SchedulePlan:
     events = tuple(events)
     window = roster_window(events)
@@ -194,7 +223,7 @@ def plan_schedule(
         return SchedulePlan((), (), ())
     types = tuple(existing_types)
     overrides = {o.day: o for o in existing_overrides}
-    desired = desired_days(events, mode)
+    desired = desired_days(events, mode, shown_absences)
     specs = tuple(_all_specs(desired.values()))
     add_extras, delete_extras = _extra_changes(desired, types, existing_extras, window)
     return SchedulePlan(
@@ -206,7 +235,26 @@ def plan_schedule(
         used_type_ids=frozenset(
             tid for spec in specs if (tid := resolve_type_id(spec, types)) is not None
         ),
+        update_types=_renamed_types(specs, types, own_type_ids),
     )
+
+
+def _renamed_types(
+    specs: Iterable[ShiftTypeSpec],
+    types: tuple[ExistingType, ...],
+    own_type_ids: frozenset[int],
+) -> tuple[tuple[int, ShiftTypeSpec], ...]:
+    """Own types whose name or icon no longer match (e.g. new schichten.toml)."""
+    by_id = {t.id: t for t in types}
+    updates: dict[int, ShiftTypeSpec] = {}
+    for spec in specs:
+        type_id = resolve_type_id(spec, types)
+        if type_id is None or type_id not in own_type_ids or type_id in updates:
+            continue
+        current = by_id[type_id]
+        if (current.name, current.icon) != (spec.name, spec.icon):
+            updates[type_id] = spec
+    return tuple(sorted(updates.items()))
 
 
 def _all_specs(days: Iterable[DayPlan]) -> Iterable[ShiftTypeSpec]:

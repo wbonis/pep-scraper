@@ -50,12 +50,9 @@ class YuvomiClient:
     def list_shift_types(self) -> tuple[ExistingType, ...]:
         rows = self._request("GET", "/shift-types").get("data", [])
         with _shape_errors("GET /shift-types"):
-            return tuple(
-                ExistingType(int(r["id"]), r.get("short_code"), str(r.get("name", "")))
-                for r in rows
-            )
+            return tuple(_existing_type(r) for r in rows)
 
-    def create_shift_type(self, spec: ShiftTypeSpec) -> int:
+    def create_shift_type(self, spec: ShiftTypeSpec) -> ExistingType:
         body = {
             "name": spec.name,
             "short_code": spec.short_code,
@@ -67,8 +64,11 @@ class YuvomiClient:
         payload = {k: v for k, v in body.items() if v is not None}
         data = self._request("POST", "/shift-types", json=payload)
         with _shape_errors("POST /shift-types"):
-            row = data.get("data", data)
-            return int(row["id"])
+            return _existing_type(data.get("data", data))
+
+    def update_shift_type(self, type_id: int, spec: ShiftTypeSpec) -> None:
+        body = {"name": spec.name, "icon": spec.icon}
+        self._request("PUT", f"/shift-types/{type_id}", json=body)
 
     def list_overrides(
         self, user_id: int, start: date, end: date
@@ -153,6 +153,16 @@ class YuvomiClient:
         with _shape_errors(f"{method} {path}"):
             data = response.json()
         return data if isinstance(data, dict) else {"data": data}
+
+
+def _existing_type(row: dict[str, Any]) -> ExistingType:
+    return ExistingType(
+        id=int(row["id"]),
+        short_code=row.get("short_code"),
+        name=str(row.get("name", "")),
+        icon=row.get("icon"),
+        created_at=str(row.get("created_at") or ""),
+    )
 
 
 @contextmanager

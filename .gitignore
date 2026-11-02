@@ -21,3 +21,4 @@ wheels/
 .env.*
 !.env.example
 .pep-scraper-state.json
+schichten.toml

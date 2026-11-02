@@ -14,6 +14,7 @@ from .fetch import FetchError, LoginError, PasswordExpiredError, fetch_dashboard
 from .files import write_private_atomic
 from .ics import build_calendar
 from .models import RosterEvent
+from .naming import NamesError, apply_names, load_names
 from .parser import ParseError, parse_dashboard
 from .state import load_tracked_types, save_tracked_types
 from .yuvomi_client import YuvomiClient, YuvomiError
@@ -44,6 +45,11 @@ def run(
     client_factory: ClientFactory = _open_yuvomi,
 ) -> int:
     try:
+        names = load_names(cfg.names_file)
+    except NamesError as exc:
+        log.error("Namensdatei: %s", exc)
+        return EXIT_CONFIG
+    try:
         payload = fetcher(cfg)
     except PasswordExpiredError as exc:
         log.error("Kennwort abgelaufen: %s", exc)
@@ -55,7 +61,7 @@ def run(
         log.error("Abruf fehlgeschlagen: %s", exc)
         return EXIT_FETCH
     try:
-        events = parse_dashboard(payload)
+        events = apply_names(parse_dashboard(payload), names)
     except ParseError as exc:
         log.error("Unerwartetes Dienstplan-Format: %s", exc)
         return EXIT_PARSE
@@ -63,7 +69,7 @@ def run(
     log.info("%d Einträge nach %s geschrieben", len(events), cfg.output)
     if cfg.yuvomi is None:
         return EXIT_OK
-    return _sync_yuvomi(cfg.yuvomi, events, dry_run, client_factory)
+    return _sync_yuvomi(cfg.yuvomi, events, dry_run, client_factory, frozenset(names))
 
 
 def _sync_yuvomi(
@@ -71,27 +77,37 @@ def _sync_yuvomi(
     events: tuple[RosterEvent, ...],
     dry_run: bool,
     client_factory: ClientFactory,
+    named: frozenset[str] = frozenset(),
 ) -> int:
-    settings = SyncSettings(user_id=cfg.user_id, absences=cfg.absences)
-    tracked = load_tracked_types(cfg.state_file)
+    settings = SyncSettings(
+        user_id=cfg.user_id, absences=cfg.absences, shown_absences=named
+    )
+    tracked = load_tracked_types(cfg.state_file, cfg.base_url)
+
+    def remember(types: dict[int, str]) -> None:
+        save_tracked_types(cfg.state_file, cfg.base_url, types)
+
     try:
         with client_factory(cfg) as client:
-            result = sync_schedule(events, client, settings, dry_run, tracked)
+            result = sync_schedule(
+                events, client, settings, dry_run, tracked, on_tracked_change=remember
+            )
     except YuvomiError as exc:
         log.error("Yuvomi-Übertragung fehlgeschlagen: %s", exc)
         return EXIT_YUVOMI
-    if not dry_run and result.tracked_type_ids != tracked:
-        save_tracked_types(cfg.state_file, result.tracked_type_ids)
+    if not dry_run and dict(result.tracked_types) != tracked:
+        remember(dict(result.tracked_types))
     _log_summary(result, dry_run)
     return EXIT_OK
 
 
 def _log_summary(result: SyncResult, dry_run: bool) -> None:
     log.info(
-        "Yuvomi%s: %d Schichttypen angelegt, %d entfernt; %d Tage gesetzt, "
-        "%d entfernt; %d Zusatzdienste angelegt, %d entfernt",
+        "Yuvomi%s: %d Schichttypen angelegt, %d umbenannt, %d entfernt; "
+        "%d Tage gesetzt, %d entfernt; %d Zusatzdienste angelegt, %d entfernt",
         " (Probelauf)" if dry_run else "",
         result.created_types,
+        result.updated_types,
         result.removed_types,
         result.updated_days,
         result.deleted_days,

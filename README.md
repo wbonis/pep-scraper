@@ -39,9 +39,31 @@ Bei jedem Fehler bleibt die alte ICS-Datei erhalten. Ein falsches Kennwort und e
 sofort erkannt (Text aus der LOGA-Anmeldeseite), ohne das Zeitlimit abzuwarten. Ein abgelaufenes Kennwort
 erkennt das Tool daran, dass LOGA nach der Anmeldung ein Kennwortfeld zeigt.
 
+### Namen der Dienste
+
+LOGA liefert nur Codes wie `S006`. Lesbare Namen kommen aus `schichten.toml` (`PEP_NAMES_FILE`, Vorlage:
+`schichten.example.toml`). Schlüssel ist der LOGA-Code oder ein Abwesenheitstitel:
+
+```toml
+[ZD015]
+name = "Früher Spätdienst"
+icon = "sunset"
+
+["Fachweiterbildung"]
+name = "Schule"
+```
+
+Ohne Eintrag gilt eine Faustregel: `F..` Frühdienst, `S..` Spätdienst, `N..` Nachtdienst; sonst bleibt der
+Code mit Uhrzeit (`ZD015 11:30-20:00`). Die Namen gelten für die ICS-Datei und für Yuvomi. `schichten.toml`
+ist arbeitgeberspezifisch und steht deshalb nicht im Repo. Eigene Pfade für `PEP_NAMES_FILE`,
+`PEP_OUTPUT` oder `YUVOMI_STATE_FILE` am besten außerhalb des Repos ablegen.
+
+Ein Abwesenheitstitel in `schichten.toml` gilt im Modus `neutral` als freigegeben und wird in Yuvomi mit
+Namen gezeigt – außer es ist ein Gesundheitsgrund. Unbekannte Titel landen als „Abwesend“ mit Hinweis im Log.
+
 ### ICS-Datei
 
-- Dienste werden Termine mit Uhrzeit (`N003 21:45-06:15`); Nachtdienste enden am Folgetag.
+- Dienste werden Termine mit Uhrzeit („Nachtdienst“); Nachtdienste enden am Folgetag.
 - `00:00-00:00`-Einträge (z. B. `FREI`) und Abwesenheiten (z. B. `Urlaub`, `Fortbildung`) werden ganztägig.
 - Die UIDs sind je Tag und Dienst stabil, Kalender-Apps aktualisieren also statt zu verdoppeln.
 - Die Datei wird nur für den eigenen Benutzer lesbar angelegt (`0600`).
@@ -52,28 +74,36 @@ Sind `YUVOMI_BASE_URL`, `YUVOMI_API_KEY` und `YUVOMI_USER_ID` gesetzt (siehe `.e
 Lauf den Dienstplan in den Schichtplan dieses Haushaltsmitglieds. Der Token braucht Schreibrecht auf den
 Schichtplan.
 
-- **Schichttypen:** ein Typ je LOGA-Code (`N003 21:45-06:15`, Farbe aus LOGA), beim ersten Auftreten angelegt.
-  Vorhandene Typen mit gleichem Kürzel oder Namen werden wiederverwendet.
+- **Schichttypen:** ein Typ je LOGA-Code (Name aus `schichten.toml`, Kürzel = LOGA-Code, Farbe aus LOGA),
+  beim ersten Auftreten angelegt. Vorhandene Typen mit gleichem Kürzel oder Namen werden wiederverwendet.
+  Ändert sich ein Name oder Icon in `schichten.toml`, benennt der nächste Lauf die eigenen Typen um.
 - **Tage:** ein Tageseintrag je Tag; freie Tage werden ausdrücklich als frei eingetragen.
 - **Mehrere Dienste an einem Tag:** der erste wird Tageseintrag, weitere werden Zusatzdienste.
-- **Abwesenheiten:** `YUVOMI_ABSENCES=neutral` (ein Typ „Abwesend“, Grund verborgen), `detail` (Grund als Typ)
-  oder `skip` (Tag wird nicht eingetragen). `detail` zeigt Gründe wie Krankmeldungen (Gesundheitsdaten)
-  allen Haushaltsmitgliedern und im Log.
+- **Abwesenheiten** (`YUVOMI_ABSENCES`):
+
+  | Wert | Wirkung |
+  |---|---|
+  | `neutral` (Standard) | bekannte harmlose Titel (Urlaub, Fortbildung, Fachweiterbildung, Feiertag, Betrieblich freier Tag, Dienstreise, …) und in `schichten.toml` eingetragene Titel mit Namen; alles andere als „Abwesend“. Gesundheitsgründe (Krank, AU, Kur, Reha, Schwangerschaft, Wiedereingliederung, …) immer als „Abwesend“ |
+  | `hidden` | jede Abwesenheit als „Abwesend“ |
+  | `detail` | immer mit Titel – zeigt auch Krankmeldungen (Gesundheitsdaten) allen Haushaltsmitgliedern |
+  | `skip` | Abwesenheitstage werden nicht eingetragen |
 - **Abgleich:** Vom Tool geschriebene Einträge tragen die Notiz `pep-scraper`. Nur diese werden entfernt,
   wenn LOGA einen Tag oder Dienst nicht mehr liefert. Manuelle Einträge an Tagen ohne LOGA-Eintrag bleiben
   unangetastet; an Tagen mit LOGA-Dienst gewinnt LOGA.
 - **Aufräumen:** Selbst angelegte Schichttypen merkt sich das Tool in `.pep-scraper-state.json`
-  (`YUVOMI_STATE_FILE`). Nutzt LOGA einen davon nicht mehr, wird er gelöscht – außer vergangene Tage
-  verweisen noch darauf, dann bleibt er für die Historie stehen. Fremde Typen werden nie gelöscht.
+  (`YUVOMI_STATE_FILE`) mit Yuvomi-URL und Anlagezeitpunkt. Nutzt LOGA einen davon nicht mehr, wird er
+  gelöscht – außer vergangene Tage verweisen noch darauf, dann bleibt er für die Historie stehen. Fremde
+  Typen, Typen einer anderen Yuvomi-Instanz und inzwischen veränderte Ids werden nie gelöscht.
 - **Mehrfach ausführen** ist unkritisch: ohne Änderung in LOGA schreibt ein Lauf nichts.
 
 ## Täglicher Lauf (cron)
 
 ```cron
-15 6 * * * cd /pfad/zu/pi-asp && /opt/homebrew/bin/uv run pep-scraper >> ~/Library/Logs/pep-scraper.log 2>&1
+15 6 * * * umask 077; cd /pfad/zu/pi-asp && /opt/homebrew/bin/uv run pep-scraper >> ~/Library/Logs/pep-scraper.log 2>&1
 ```
 
-Der Exit-Code zeigt, ob der Lauf geklappt hat. Jeder Lauf ist eine echte LOGA-Anmeldung; mehr als ein paar
+`umask 077` hält das Log (enthält Dienstplandaten) für andere Benutzer unlesbar. Der Exit-Code zeigt, ob
+der Lauf geklappt hat. Jeder Lauf ist eine echte LOGA-Anmeldung; mehr als ein paar
 Läufe am Tag sind nicht nötig und können ein Captcha oder eine Sperre auslösen.
 
 ## Entwicklung

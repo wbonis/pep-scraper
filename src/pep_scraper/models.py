@@ -24,3 +24,4 @@ class RosterEvent:
     kind: EventKind = "shift"
     code: str = ""
     color: str | None = None
+    icon: str | None = None

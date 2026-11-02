@@ -24,9 +24,13 @@ class FakeClient:
     def list_shift_types(self) -> tuple[ExistingType, ...]:
         return tuple(self.types)
 
-    def create_shift_type(self, spec: ShiftTypeSpec) -> int:
+    def create_shift_type(self, spec: ShiftTypeSpec) -> ExistingType:
         self.calls.append(("create", spec.short_code))
-        return 100 + len(self.calls)
+        new_id = 100 + len(self.calls)
+        return ExistingType(new_id, spec.short_code, spec.name, spec.icon, f"c{new_id}")
+
+    def update_shift_type(self, type_id: int, spec: ShiftTypeSpec) -> None:
+        self.calls.append(("update_type", type_id, spec.name, spec.icon))
 
     def list_overrides(
         self, user_id: int, start: date, end: date
@@ -131,31 +135,98 @@ def test_sync_writes_extra_shift() -> None:
 
 
 def test_sync_removes_unused_tracked_types_only() -> None:
-    client = FakeClient(types=[ExistingType(7, "N003", "Nacht")], in_use={21})
+    types = [
+        ExistingType(7, "N003", "Nacht", None, "a"),
+        ExistingType(20, "X", "x", None, "b"),
+        ExistingType(21, "Y", "y", None, "c"),
+    ]
+    client = FakeClient(types=types, in_use={21})
     result = sync_schedule(
         (_night(1),),
         client,
         SETTINGS,
         dry_run=False,
-        tracked_type_ids=frozenset({7, 20, 21}),
+        tracked={7: "a", 20: "b", 21: "c"},
     )
     deleted = [c[1] for c in client.calls if c[0] == "delete_type"]
     assert deleted == [20, 21]  # 7 still needed -> never tried
     assert result.removed_types == 1
-    assert result.tracked_type_ids == frozenset({7, 21})  # 21 in use (history) -> keep
+    assert dict(result.tracked_types) == {
+        7: "a",
+        21: "c",
+    }  # 21 in use (history) -> keep
+
+
+def test_tracked_id_with_other_fingerprint_is_never_deleted() -> None:
+    client = FakeClient(types=[ExistingType(20, "X", "fremd", None, "2027-01-01")])
+    result = sync_schedule(
+        (_night(1),),
+        client,
+        SETTINGS,
+        dry_run=False,
+        tracked={20: "2026-11-01", 30: "z"},
+    )
+    assert not [c for c in client.calls if c[0] == "delete_type"]
+    assert 20 not in result.tracked_types and 30 not in result.tracked_types
+
+
+def test_legacy_tracked_id_adopts_fingerprint() -> None:
+    client = FakeClient(types=[ExistingType(7, "N003", "Nacht", None, "2026-11-01")])
+    result = sync_schedule(
+        (_night(1),), client, SETTINGS, dry_run=False, tracked={7: ""}
+    )
+    assert dict(result.tracked_types) == {7: "2026-11-01"}
 
 
 def test_sync_tracks_newly_created_types() -> None:
     client = FakeClient()
     result = sync_schedule((_night(1),), client, SETTINGS, dry_run=False)
-    created_id = 102
-    assert result.tracked_type_ids == frozenset({created_id})
+    assert dict(result.tracked_types) == {102: "c102"}
+
+
+def test_created_types_reported_before_later_failure() -> None:
+    import pytest
+
+    from pep_scraper.yuvomi_client import YuvomiError
+
+    class FailingPut(FakeClient):
+        def put_override(self, *_a: object) -> None:
+            raise YuvomiError("HTTP 500")
+
+    seen: list[dict[int, str]] = []
+    with pytest.raises(YuvomiError):
+        sync_schedule(
+            (_night(1),),
+            FailingPut(),
+            SETTINGS,
+            dry_run=False,
+            on_tracked_change=seen.append,
+        )
+    assert seen == [{102: "c102"}]
+
+
+def test_own_type_renamed() -> None:
+    from dataclasses import replace
+
+    client = FakeClient(types=[ExistingType(7, "N003", "N003 21:45-06:15", None, "t")])
+    night = replace(_night(1), summary="Nachtdienst", icon="moon")
+    result = sync_schedule((night,), client, SETTINGS, dry_run=False, tracked={7: "t"})
+    assert ("update_type", 7, "Nachtdienst", "moon") in client.calls
+    assert result.updated_types == 1
 
 
 def test_dry_run_tries_no_type_cleanup() -> None:
-    client = FakeClient()
+    client = FakeClient(types=[ExistingType(20, "X", "x")])
     result = sync_schedule(
-        (_night(1),), client, SETTINGS, dry_run=True, tracked_type_ids=frozenset({20})
+        (_night(1),), client, SETTINGS, dry_run=True, tracked={20: ""}
     )
+    assert not [c for c in client.calls if c[0] in ("delete_type", "update_type")]
+    assert dict(result.tracked_types) == {20: ""}
+
+
+def test_type_without_fingerprint_is_never_deleted() -> None:
+    client = FakeClient(
+        types=[ExistingType(7, "N003", "Nacht"), ExistingType(20, "X", "x")]
+    )
+    sync_schedule((_night(1),), client, SETTINGS, dry_run=False, tracked={20: ""})
     assert not [c for c in client.calls if c[0] == "delete_type"]
-    assert result.tracked_type_ids == frozenset({20})

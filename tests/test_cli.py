@@ -89,7 +89,9 @@ def _yuvomi_cfg(tmp_path: Path) -> Config:
     from pep_scraper.config import YuvomiConfig
     from pep_scraper.yuvomi_plan import AbsenceMode
 
-    yuv = YuvomiConfig("https://y.example", "k", 4, AbsenceMode.NEUTRAL)
+    yuv = YuvomiConfig(
+        "https://y.example", "k", 4, AbsenceMode.NEUTRAL, tmp_path / "state.json"
+    )
     return replace(_config(tmp_path), yuvomi=yuv)
 
 
@@ -172,4 +174,52 @@ def test_run_persists_created_type_ids(
         fetcher=lambda _c: dashboard_json,
         client_factory=lambda _y: nullcontext(FakeClient()),
     )
-    assert load_tracked_types(state)  # ids of created shift types remembered
+    assert load_tracked_types(state, "https://y.example")  # created types remembered
+
+
+def test_names_applied_to_ics(tmp_path: Path, dashboard_json: dict[str, Any]) -> None:
+    from dataclasses import replace
+
+    names = tmp_path / "schichten.toml"
+    names.write_text('[S001]\nname = "Spätdienst"\nicon = "sunset"\n', encoding="utf-8")
+    cfg = replace(_config(tmp_path), names_file=names)
+    assert cli.run(cfg, fetcher=lambda _c: dashboard_json) == 0
+    summaries = {
+        str(e["SUMMARY"])
+        for e in Calendar.from_ical(cfg.output.read_bytes()).walk("VEVENT")
+    }
+    assert (
+        "Spätdienst" in summaries and "Nachtdienst" in summaries
+    )  # file + rule of thumb
+
+
+def test_invalid_names_file_is_config_error(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    names = tmp_path / "schichten.toml"
+    names.write_text("[kaputt", encoding="utf-8")
+    cfg = replace(_config(tmp_path), names_file=names)
+    called: list[bool] = []
+
+    def fetcher(_c: Config) -> dict[str, Any]:
+        called.append(True)
+        return {}
+
+    assert cli.run(cfg, fetcher=fetcher) == cli.EXIT_CONFIG
+    assert not called  # fails before logging in to LOGA
+
+
+def test_write_failure_leaves_no_temp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from pep_scraper.files import write_private_atomic
+
+    def boom(_fd: int) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "fsync", boom)
+    with pytest.raises(OSError):
+        write_private_atomic(tmp_path / "x.ics", b"data")
+    assert list(tmp_path.iterdir()) == []

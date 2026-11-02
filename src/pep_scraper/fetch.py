@@ -136,7 +136,8 @@ def _raise_on_login_message(page: Page) -> None:
     if PRIVATE_PATH in page.url:
         return
     messages: list[list[str]] = page.evaluate(VISIBLE_MESSAGES_JS)
-    for box_id, text in messages:
+    for box_id, raw_text in messages:
+        text = " ".join(raw_text.split())[:200]  # one line, bounded, for the log
         if box_id in MAINTENANCE_BOXES:
             raise MaintenanceError(f"LOGA gesperrt: {text}")
         raise LoginError(f"Anmeldung abgelehnt: {text}")

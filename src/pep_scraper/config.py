@@ -12,6 +12,7 @@ DEFAULT_OUTPUT = "dienstplan.ics"
 DEFAULT_TIMEOUT_MS = 60_000
 DEFAULT_TZ = "Europe/Berlin"
 DEFAULT_STATE_FILE = ".pep-scraper-state.json"
+DEFAULT_NAMES_FILE = "schichten.toml"
 FALSE_VALUES = frozenset({"0", "false", "no"})
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
@@ -38,6 +39,7 @@ class Config:
     headless: bool
     timeout_ms: int
     tz_name: str
+    names_file: Path = Path(DEFAULT_NAMES_FILE)
     yuvomi: YuvomiConfig | None = None
 
 
@@ -50,6 +52,7 @@ def load_config(env: Mapping[str, str]) -> Config:
         headless=_bool(env, "PEP_HEADLESS", default=True),
         timeout_ms=_int(env, "PEP_TIMEOUT_MS", DEFAULT_TIMEOUT_MS),
         tz_name=env.get("PEP_TZ", DEFAULT_TZ),
+        names_file=Path(env.get("PEP_NAMES_FILE", DEFAULT_NAMES_FILE)),
         yuvomi=_yuvomi(env),
     )
 
@@ -86,6 +89,8 @@ def _required(env: Mapping[str, str], key: str) -> str:
 
 def _base_url(raw: str, key: str) -> str:
     url = urlsplit(raw.strip())
+    if url.username or url.password:
+        raise ConfigError(f"{key} darf keine Zugangsdaten enthalten")
     plain_http_ok = url.scheme == "http" and url.hostname in LOCAL_HOSTS
     if not url.hostname or (url.scheme != "https" and not plain_http_ok):
         shown = f"{url.scheme}://{url.hostname}" if url.hostname else "ungültige URL"
