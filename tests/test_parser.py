@@ -90,3 +90,54 @@ def test_event_kinds_codes_and_colors(dashboard_json: dict[str, Any]) -> None:
     free = events["FREI Freier Tag, Bewertung nach Freigabe"]
     assert (free.kind, free.code) == ("free", "FREI")
     assert events["Urlaub"].color is None
+
+
+def test_plan_entry_without_type_is_parsed() -> None:
+    """Excerpt as reported for 2026-12-31: shifts list, no 'type' field."""
+    payload = {
+        "events": [
+            {
+                "title": "Betrieblich freier Tag",
+                "date": "2026-12-31",
+                "absence": True,
+                "noon": False,
+                "afternoon": False,
+            },
+            {
+                "title": "Internistisches Zentrum → Planer Station 18 Kardiologie",
+                "date": "2026-12-31",
+                "absence": False,
+                "objektId": "1003.17",
+                "objektMan": "HKL",
+                "shifts": [
+                    {
+                        "from": "2026-12-31T13:45:00",
+                        "to": "2026-12-31T22:15:00",
+                        "code": "S006",
+                        "name": "13:45-22:15",
+                        "note": "Wunsch",
+                        "color": 10420139,
+                    }
+                ],
+            },
+        ]
+    }
+    events = parse_dashboard(payload)
+    assert [(e.kind, e.code) for e in events] == [
+        ("absence", "Betrieblich freier Tag"),
+        ("shift", "S006"),
+    ]
+
+
+def test_explicit_unknown_type_still_skipped() -> None:
+    payload = {
+        "events": [
+            {
+                "date": "2026-11-07",
+                "absence": False,
+                "type": "SOMETHING_NEW",
+                "shifts": [{"from": "x", "to": "x", "code": "X", "name": ""}],
+            }
+        ]
+    }
+    assert parse_dashboard(payload) == ()

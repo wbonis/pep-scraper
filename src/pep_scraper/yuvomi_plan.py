@@ -54,6 +54,8 @@ class ExistingType:
     name: str
     icon: str | None = None
     created_at: str = ""
+    start_time: str | None = None  # "HH:MM"; None = Yuvomi did not report it
+    end_time: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,17 +175,23 @@ def _absence_spec(
             )
         return NEUTRAL_ABSENCE
     icon = event.icon or ABSENCE_ICON
-    return ShiftTypeSpec(None, event.summary, None, None, ABSENCE_COLOR, icon)
+    start, end = _times(event) if not event.all_day else (None, None)
+    return ShiftTypeSpec(None, event.summary, start, end, ABSENCE_COLOR, icon)
+
+
+def _times(event: RosterEvent) -> tuple[str, str]:
+    if not (isinstance(event.start, datetime) and isinstance(event.end, datetime)):
+        raise TypeError(f"{event.summary!r} needs start/end datetimes")
+    return event.start.strftime("%H:%M"), event.end.strftime("%H:%M")
 
 
 def _shift_spec(event: RosterEvent) -> ShiftTypeSpec:
-    if not (isinstance(event.start, datetime) and isinstance(event.end, datetime)):
-        raise TypeError(f"shift {event.summary!r} needs start/end datetimes")
+    start, end = _times(event)
     return ShiftTypeSpec(
         short_code=event.code[:MAX_SHORT_CODE] or None,
         name=event.summary,
-        start_time=event.start.strftime("%H:%M"),
-        end_time=event.end.strftime("%H:%M"),
+        start_time=start,
+        end_time=end,
         color=event.color or DEFAULT_COLOR,
         icon=event.icon,
     )
@@ -244,17 +252,27 @@ def _renamed_types(
     types: tuple[ExistingType, ...],
     own_type_ids: frozenset[int],
 ) -> tuple[tuple[int, ShiftTypeSpec], ...]:
-    """Own types whose name or icon no longer match (e.g. new schichten.toml)."""
+    """Own types whose name, icon or times no longer match (e.g. new
+    schichten.toml or break setting). Times count only if both sides have them."""
     by_id = {t.id: t for t in types}
     updates: dict[int, ShiftTypeSpec] = {}
     for spec in specs:
         type_id = resolve_type_id(spec, types)
         if type_id is None or type_id not in own_type_ids or type_id in updates:
             continue
-        current = by_id[type_id]
-        if (current.name, current.icon) != (spec.name, spec.icon):
+        if _differs(by_id[type_id], spec):
             updates[type_id] = spec
     return tuple(sorted(updates.items()))
+
+
+def _differs(current: ExistingType, spec: ShiftTypeSpec) -> bool:
+    if (current.name, current.icon) != (spec.name, spec.icon):
+        return True
+    current_times = (current.start_time, current.end_time)
+    spec_times = (spec.start_time, spec.end_time)
+    if (None, None) in (current_times, spec_times):
+        return False
+    return (current.start_time, current.end_time) != (spec.start_time, spec.end_time)
 
 
 def _all_specs(days: Iterable[DayPlan]) -> Iterable[ShiftTypeSpec]:

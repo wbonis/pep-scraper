@@ -67,7 +67,9 @@ class YuvomiClient:
             return _existing_type(data.get("data", data))
 
     def update_shift_type(self, type_id: int, spec: ShiftTypeSpec) -> None:
-        body = {"name": spec.name, "icon": spec.icon}
+        body: dict[str, str | None] = {"name": spec.name, "icon": spec.icon}
+        times = {"start_time": spec.start_time, "end_time": spec.end_time}
+        body.update({k: v for k, v in times.items() if v is not None})
         self._request("PUT", f"/shift-types/{type_id}", json=body)
 
     def list_overrides(
@@ -162,7 +164,14 @@ def _existing_type(row: dict[str, Any]) -> ExistingType:
         name=str(row.get("name", "")),
         icon=row.get("icon"),
         created_at=str(row.get("created_at") or ""),
+        start_time=_clock(row.get("start_time")),
+        end_time=_clock(row.get("end_time")),
     )
+
+
+def _clock(value: Any) -> str | None:
+    """'21:45:00' or '21:45' -> '21:45'."""
+    return str(value)[:5] if value else None
 
 
 @contextmanager

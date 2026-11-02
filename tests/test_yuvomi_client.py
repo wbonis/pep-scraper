@@ -69,7 +69,12 @@ def test_create_shift_type_body() -> None:
 def test_update_shift_type_body() -> None:
     def handle(req: httpx.Request) -> httpx.Response:
         assert (req.method, req.url.path) == ("PUT", "/api/v1/schedule/shift-types/7")
-        assert json.loads(req.content) == {"name": "Nachtdienst", "icon": "moon"}
+        assert json.loads(req.content) == {
+            "name": "Nachtdienst",
+            "icon": "moon",
+            "start_time": "21:45",
+            "end_time": "06:15",
+        }
         return httpx.Response(200, json={"data": {}})
 
     spec = ShiftTypeSpec("N003", "Nachtdienst", "21:45", "06:15", "#ABB3FF", "moon")
@@ -226,3 +231,13 @@ def test_delete_shift_type_other_error_raises() -> None:
     )
     with pytest.raises(YuvomiError, match="500"):
         _client(transport).delete_shift_type(5)
+
+
+def test_list_shift_types_reads_times() -> None:
+    row = {"id": 4, "name": "N", "start_time": "21:45:00", "end_time": "06:15"}
+
+    def handle(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [row]})
+
+    (t,) = _client(httpx.MockTransport(handle)).list_shift_types()
+    assert (t.start_time, t.end_time) == ("21:45", "06:15")

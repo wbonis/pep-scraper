@@ -262,3 +262,60 @@ def test_neutral_shows_absence_named_in_file() -> None:
     )
     spec = days[date(2026, 11, 16)].primary
     assert spec is not None and spec.name == "Wiedervorstellung XY"
+
+
+def test_plan_updates_own_type_when_times_change() -> None:
+    types = (ExistingType(10, "N003", "N003 21:00-06:00", None, "", "21:00", "06:30"),)
+    plan = plan_schedule(
+        (_shift(5),), types, (), (), AbsenceMode.NEUTRAL, own_type_ids=frozenset({10})
+    )
+    assert [(tid, s.end_time) for tid, s in plan.update_types] == [(10, "06:00")]
+
+
+def test_plan_keeps_type_when_yuvomi_reports_no_times() -> None:
+    types = (ExistingType(10, "N003", "N003 21:00-06:00", None, "", None, None),)
+    plan = plan_schedule(
+        (_shift(5),), types, (), (), AbsenceMode.NEUTRAL, own_type_ids=frozenset({10})
+    )
+    assert plan.update_types == ()
+
+
+def test_timed_absence_spec_has_times() -> None:
+    from dataclasses import replace
+
+    credited = replace(
+        _all_day(16, "absence", "Urlaub"),
+        start=datetime(2026, 11, 16, 8),
+        end=datetime(2026, 11, 16, 16),
+        all_day=False,
+    )
+    days = desired_days((credited,), AbsenceMode.NEUTRAL)
+    spec = days[date(2026, 11, 16)].primary
+    assert spec is not None
+    assert (spec.name, spec.start_time, spec.end_time) == ("Urlaub", "08:00", "16:00")
+
+
+def test_hidden_timed_absence_stays_neutral() -> None:
+    from dataclasses import replace
+
+    credited = replace(
+        _all_day(16, "absence", "Krank mit EFZ"),
+        start=datetime(2026, 11, 16, 8),
+        end=datetime(2026, 11, 16, 16),
+        all_day=False,
+    )
+    days = desired_days((credited,), AbsenceMode.NEUTRAL)
+    assert days[date(2026, 11, 16)].primary == NEUTRAL_ABSENCE
+
+
+def test_plan_ignores_times_when_spec_has_none() -> None:
+    types = (ExistingType(10, None, "Urlaub", "calendar-off", "", "08:00", "16:00"),)
+    plan = plan_schedule(
+        (_all_day(16, "absence", "Urlaub"),),
+        types,
+        (),
+        (),
+        AbsenceMode.NEUTRAL,
+        own_type_ids=frozenset({10}),
+    )
+    assert plan.update_types == ()

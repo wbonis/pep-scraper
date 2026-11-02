@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ def _config(tmp_path: Path) -> Config:
         headless=True,
         timeout_ms=1000,
         tz_name="Europe/Berlin",
+        names_file=tmp_path / "schichten.toml",
     )
 
 
@@ -225,3 +227,121 @@ def test_write_failure_leaves_no_temp_file(
     with pytest.raises(OSError):
         write_private_atomic(tmp_path / "x.ics", b"data")
     assert list(tmp_path.iterdir()) == []
+
+
+HOLIDAY_AND_SHIFT = {
+    "events": [
+        {
+            "title": "Betrieblich freier Tag",
+            "date": "2026-12-31",
+            "absence": True,
+            "noon": False,
+            "afternoon": False,
+        },
+        {
+            "title": "Internistisches Zentrum → Station 18",
+            "date": "2026-12-31",
+            "absence": False,
+            "type": "SPEP_PLAN",
+            "shifts": [
+                {
+                    "from": "2026-12-31T13:45:00",
+                    "to": "2026-12-31T22:15:00",
+                    "code": "S006",
+                    "name": "13:45-22:15",
+                    "color": 10420139,
+                }
+            ],
+        },
+        {"title": "Feiertag", "date": "2026-12-25", "absence": True},
+    ]
+}
+
+
+def _summaries(cfg: Config) -> dict[str, str]:
+    cal = Calendar.from_ical(cfg.output.read_bytes())
+    return {
+        str(e["SUMMARY"]): e.decoded("DTSTART").isoformat() for e in cal.walk("VEVENT")
+    }
+
+
+def test_holiday_rule_keeps_shift_and_frees_holiday(tmp_path: Path) -> None:
+    from contextlib import nullcontext
+
+    from .test_yuvomi_sync import FakeClient
+
+    fake = FakeClient()
+    cfg = _yuvomi_cfg(tmp_path)
+    code = cli.run(
+        cfg,
+        fetcher=lambda _c: HOLIDAY_AND_SHIFT,
+        client_factory=lambda _y: nullcontext(fake),
+    )
+    assert code == 0
+    assert _summaries(cfg) == {
+        "Spätdienst": "2026-12-31T13:45:00+01:00",
+        "Freier Tag": "2026-12-25",
+    }
+    puts = {c[2]: c[3] for c in fake.calls if c[0] == "put"}
+    assert ("create", "S006") in fake.calls
+    assert ("create", None) not in fake.calls  # no absence type
+    assert puts[date(2026, 12, 31)] is not None  # the shift, not the holiday
+    assert puts[date(2026, 12, 25)] is None  # explicit day off
+
+
+def test_settings_from_names_file(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+    cfg.names_file.write_text(
+        "[einstellungen]\nfeiertagsregel = false\npause_minuten = 30\n",
+        encoding="utf-8",
+    )
+    assert cli.run(cfg, fetcher=lambda _c: HOLIDAY_AND_SHIFT) == 0
+    cal = Calendar.from_ical(cfg.output.read_bytes())
+    ends = {str(e["SUMMARY"]): e.decoded("DTEND") for e in cal.walk("VEVENT")}
+    assert ends["Spätdienst"].strftime("%H:%M") == "21:45"
+    assert "Betrieblich freier Tag" in ends and "Feiertag" in ends
+
+
+def test_invalid_settings_is_config_error(tmp_path: Path) -> None:
+    cfg = _config(tmp_path)
+    cfg.names_file.write_text("[einstellungen]\npause_minuten = -1\n", "utf-8")
+    assert cli.run(cfg, fetcher=lambda _c: HOLIDAY_AND_SHIFT) == cli.EXIT_CONFIG
+
+
+def test_unknown_codes_appended_once(
+    tmp_path: Path, dashboard_json: dict[str, Any]
+) -> None:
+    from pep_scraper.naming import load_names
+
+    cfg = _config(tmp_path)
+    cfg.names_file.write_text('[S001]\nname = "Spät"\n', encoding="utf-8")
+    cli.run(cfg, fetcher=lambda _c: dashboard_json)
+    first = cfg.names_file.read_text(encoding="utf-8")
+    assert set(load_names(cfg.names_file)) == {"S001", "N003", "FREI"}
+    cli.run(cfg, fetcher=lambda _c: dashboard_json)
+    assert cfg.names_file.read_text(encoding="utf-8") == first
+
+
+def test_unknown_codes_not_appended_when_off_or_dry_run(
+    tmp_path: Path, dashboard_json: dict[str, Any]
+) -> None:
+    cfg = _config(tmp_path)
+    off = "[einstellungen]\nneue_codes_eintragen = false\n"
+    cfg.names_file.write_text(off, encoding="utf-8")
+    cli.run(cfg, fetcher=lambda _c: dashboard_json)
+    assert cfg.names_file.read_text(encoding="utf-8") == off
+    cfg.names_file.unlink()
+    cli.run(cfg, fetcher=lambda _c: dashboard_json, dry_run=True)
+    assert not cfg.names_file.exists()
+
+
+def test_new_code_write_error_does_not_stop_run(
+    tmp_path: Path, dashboard_json: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*_a: Any, **_k: Any) -> None:
+        raise ValueError("kaputt")
+
+    monkeypatch.setattr(cli, "append_codes", boom)
+    cfg = _config(tmp_path)
+    assert cli.run(cfg, fetcher=lambda _c: dashboard_json) == 0
+    assert cfg.output.exists()

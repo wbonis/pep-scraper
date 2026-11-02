@@ -2,7 +2,8 @@
 
 Source order: entry in ``schichten.toml`` (key = LOGA code or absence title),
 then a rule of thumb for shift codes (F.. Frühdienst, S.. Spätdienst,
-N.. Nachtdienst), else the LOGA text stays as it is.
+N.. Nachtdienst), else the LOGA text stays as it is. The reserved table
+``[einstellungen]`` holds switches instead of a name, see ``settings.py``.
 """
 
 import re
@@ -16,6 +17,7 @@ from .models import RosterEvent
 
 ICON_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")  # Yuvomi/lucide icon names
 MAX_NAME = 100
+SETTINGS_SECTION = "einstellungen"  # reserved key, see settings.py
 
 
 class NamesError(ValueError):
@@ -55,6 +57,7 @@ HARMLESS_ABSENCES = frozenset(
         "schule",
         "berufsschule",
         "feiertag",
+        "feiertage",
         "betrieblich freier tag",
         "dienstreise",
         "freizeitausgleich",
@@ -64,13 +67,13 @@ HARMLESS_ABSENCES = frozenset(
 )
 
 
-def _norm(text: str) -> str:
+def norm(text: str) -> str:
     return unicodedata.normalize("NFKC", text).casefold().strip()
 
 
 def is_health_reason(title: str) -> bool:
     """Absence reasons that are health data and must not be shown to others."""
-    return HEALTH_RE.search(_norm(title)) is not None
+    return HEALTH_RE.search(norm(title)) is not None
 
 
 def is_shown_absence(title: str, named: frozenset[str]) -> bool:
@@ -78,17 +81,24 @@ def is_shown_absence(title: str, named: frozenset[str]) -> bool:
     never health reasons."""
     if is_health_reason(title):
         return False
-    return _norm(title) in HARMLESS_ABSENCES or title in named
+    return norm(title) in HARMLESS_ABSENCES or title in named
 
 
-def load_names(path: Path) -> dict[str, NameEntry]:
+def read_toml(path: Path) -> dict[str, object]:
     if not path.exists():
         return {}
     try:
-        raw = tomllib.loads(path.read_text(encoding="utf-8"))
+        return tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:  # incl. TOML and UTF-8 decode errors
         raise NamesError(f"{path}: {exc}") from exc
-    return {str(key): _entry(path, str(key), value) for key, value in raw.items()}
+
+
+def load_names(path: Path) -> dict[str, NameEntry]:
+    return {
+        str(key): _entry(path, str(key), value)
+        for key, value in read_toml(path).items()
+        if key != SETTINGS_SECTION
+    }
 
 
 def _entry(path: Path, key: str, value: object) -> NameEntry:
@@ -115,13 +125,13 @@ def apply_names(
 
 
 def _named(event: RosterEvent, names: Mapping[str, NameEntry]) -> RosterEvent:
-    entry = names.get(event.code) or _heuristic(event)
+    entry = names.get(event.code) or heuristic(event)
     if entry is None:
         return event
     return replace(event, summary=entry.name, icon=entry.icon)
 
 
-def _heuristic(event: RosterEvent) -> NameEntry | None:
+def heuristic(event: RosterEvent) -> NameEntry | None:
     if event.kind != "shift":
         return None
     return next((entry for rx, entry in HEURISTICS if rx.match(event.code)), None)

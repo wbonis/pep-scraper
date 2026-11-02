@@ -3,8 +3,10 @@
 import argparse
 import logging
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
+from datetime import date
+from pathlib import Path
 from typing import Any
 
 from dotenv import dotenv_values
@@ -14,8 +16,11 @@ from .fetch import FetchError, LoginError, PasswordExpiredError, fetch_dashboard
 from .files import write_private_atomic
 from .ics import build_calendar
 from .models import RosterEvent
-from .naming import NamesError, apply_names, load_names
+from .naming import NameEntry, NamesError, apply_names, load_names
+from .new_codes import append_codes, unknown_codes
 from .parser import ParseError, parse_dashboard
+from .rules import apply_rules
+from .settings import load_settings
 from .state import load_tracked_types, save_tracked_types
 from .yuvomi_client import YuvomiClient, YuvomiError
 from .yuvomi_sync import ScheduleClient, SyncResult, SyncSettings, sync_schedule
@@ -46,6 +51,7 @@ def run(
 ) -> int:
     try:
         names = load_names(cfg.names_file)
+        settings = load_settings(cfg.names_file)
     except NamesError as exc:
         log.error("Namensdatei: %s", exc)
         return EXIT_CONFIG
@@ -61,15 +67,40 @@ def run(
         log.error("Abruf fehlgeschlagen: %s", exc)
         return EXIT_FETCH
     try:
-        events = apply_names(parse_dashboard(payload), names)
+        parsed = parse_dashboard(payload)
     except ParseError as exc:
         log.error("Unerwartetes Dienstplan-Format: %s", exc)
         return EXIT_PARSE
+    if settings.add_new_codes:
+        _add_new_codes(cfg.names_file, parsed, names, dry_run)
+    events = apply_names(apply_rules(parsed, settings), names)
     write_private_atomic(cfg.output, build_calendar(events, cfg.tz_name))
     log.info("%d Einträge nach %s geschrieben", len(events), cfg.output)
     if cfg.yuvomi is None:
         return EXIT_OK
     return _sync_yuvomi(cfg.yuvomi, events, dry_run, client_factory, frozenset(names))
+
+
+def _add_new_codes(
+    path: Path,
+    events: tuple[RosterEvent, ...],
+    names: Mapping[str, NameEntry],
+    dry_run: bool,
+) -> None:
+    """Unknown LOGA codes go into schichten.toml; a failure never stops the run."""
+    new = unknown_codes(events, names)
+    if not new:
+        return
+    codes = ", ".join(repr(code) for code, _ in new)
+    if dry_run:
+        log.info("Probelauf: neue Dienstcodes nicht in %s eingetragen: %s", path, codes)
+        return
+    try:
+        append_codes(path, new, today=date.today())
+    except (OSError, ValueError) as exc:  # incl. TOML and encoding errors
+        log.warning("Neue Dienstcodes nicht in %s eingetragen: %s", path, exc)
+        return
+    log.info("Neue Dienstcodes in %s eingetragen: %s", path, codes)
 
 
 def _sync_yuvomi(

@@ -31,7 +31,7 @@ def parse_dashboard(payload: Mapping[str, Any]) -> tuple[RosterEvent, ...]:
 def _parse_entry(raw: Mapping[str, Any]) -> Iterator[RosterEvent]:
     if raw.get("absence") is True:
         yield _absence(raw)
-    elif raw.get("type") in PLAN_TYPES:
+    elif _is_plan(raw):
         for index, shift in enumerate(raw.get("shifts") or ()):
             yield _shift(raw, shift, index)
     else:
@@ -40,6 +40,14 @@ def _parse_entry(raw: Mapping[str, Any]) -> Iterator[RosterEvent]:
             raw.get("type"),
             raw.get("date"),
         )
+
+
+def _is_plan(raw: Mapping[str, Any]) -> bool:
+    """Known plan type, or no type at all but a shift list (seen for 2026-12-31)."""
+    kind = raw.get("type")
+    if kind is None:
+        return isinstance(raw.get("shifts"), list)
+    return kind in PLAN_TYPES
 
 
 def _absence(raw: Mapping[str, Any]) -> RosterEvent:

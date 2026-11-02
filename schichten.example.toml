@@ -3,6 +3,26 @@
 # Schlüssel = LOGA-Code (z. B. S006) oder Abwesenheitstitel (in Anführungszeichen).
 # icon = optional, ein Lucide-Iconname (https://lucide.dev/icons), z. B. sunrise, sunset, moon.
 # Ohne Eintrag gilt die Faustregel: F.. Frühdienst, S.. Spätdienst, N.. Nachtdienst.
+# Unbekannte Dienstcodes hängt das Tool automatisch am Ende an (abschalten: neue_codes_eintragen = false).
+
+# Schalter (alles optional, Werte = Standard, Details im README):
+[einstellungen]
+# Feiertag/Betrieblich freier Tag ohne Dienst = "Freier Tag", mit Dienst = weglassen
+feiertagsregel = true
+# feiertage = ["Feiertag", "Feiertage", "Betrieblich freier Tag"]
+neue_codes_eintragen = true
+
+# Arbeitszeitäquivalent: Gutschrift für ganztägige Einträge, [] = aus
+gutschrift = []
+# gutschrift = ["Urlaub", "Fortbildung"]
+gutschrift_modus = "termin"   # termin = Termin mit Uhrzeit | info = ganztägig + "Gutschrift 8:00 Std."
+schicht_start = "08:00"
+stunden_pro_tag = 8           # oder stunden_pro_woche = 40 (geteilt durch 5 Tage)
+
+# Pausenabzug am Dienstende, 0 = aus
+pause_minuten = 0
+pause_ab_stunden = 0          # nur Dienste länger als ... Std., 6 = § 4 ArbZG
+pause_modus = "kuerzen"       # kuerzen = Endzeit kürzen | info = Uhrzeit bleibt + "Netto 8:00 Std."
 
 [F013]
 name = "Frühdienst"

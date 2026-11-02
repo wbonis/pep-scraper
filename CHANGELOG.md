@@ -7,8 +7,23 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- **Einstellungen** im Abschnitt `[einstellungen]` von `schichten.toml`; ungültige Werte führen zu
+  Exit-Code 1, bevor sich das Tool bei LOGA anmeldet.
+- **Feiertagsregel** (`feiertagsregel`, Standard an): Feiertag oder betrieblich freier Tag ohne Dienst wird
+  „Freier Tag“, mit Dienst wird er weggelassen.
+- **Arbeitszeitäquivalent** (`gutschrift`): ganztägige Einträge wie Urlaub oder Fortbildung als Termin ab
+  `schicht_start` mit `stunden_pro_tag`/`stunden_pro_woche` oder als Hinweis in der Beschreibung.
+- **Pausenabzug** (`pause_minuten`, `pause_ab_stunden`): Dienstende kürzen oder Netto-Zeit als Hinweis.
+- **Neue Dienstcodes** werden automatisch in `schichten.toml` eingetragen (`neue_codes_eintragen`).
+- Eigene Yuvomi-Schichttypen übernehmen geänderte Uhrzeiten, wenn Yuvomi sie meldet.
 - Dependabot hält Python-Abhängigkeiten (`uv`) und GitHub Actions wöchentlich aktuell.
 - Dieses Änderungsprotokoll (`CHANGELOG.md`).
+
+### Behoben
+- Dienst an einem Feiertag oder betrieblich freien Tag (z. B. 31.12.) fehlte in Yuvomi, weil die
+  Abwesenheit gewann. Die Feiertagsregel übernimmt jetzt den Dienst.
+- Dienstplan-Einträge ohne Feld `type`, aber mit Dienstliste werden jetzt gelesen statt übersprungen.
+  Einträge mit unbekanntem `type` werden weiter übersprungen.
 
 ## [0.1.0] – 2026-11-02
 
