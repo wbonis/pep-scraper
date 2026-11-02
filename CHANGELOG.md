@@ -1,10 +1,10 @@
-# Changelog
+# Änderungsprotokoll
 
 Alle nennenswerten Änderungen an diesem Projekt. Format nach
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/), Versionen nach
 [Semantic Versioning](https://semver.org/lang/de/).
 
-## [Unreleased]
+## [Unveröffentlicht]
 
 ### Hinzugefügt
 - Dependabot hält Python-Abhängigkeiten (`uv`) und GitHub Actions wöchentlich aktuell.
@@ -48,5 +48,5 @@ Erste Version.
   selbst angelegt hat.
 - `PEP_BASE_URL` ist Pflicht, das Repo enthält keine arbeitgeberspezifische Adresse mehr.
 
-[Unreleased]: https://github.com/wbonis/pep-scraper/compare/c50e33d...HEAD
+[Unveröffentlicht]: https://github.com/wbonis/pep-scraper/compare/c50e33d...HEAD
 [0.1.0]: https://github.com/wbonis/pep-scraper/commits/c50e33d
