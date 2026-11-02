@@ -8,7 +8,7 @@ Alle nennenswerten Änderungen an diesem Projekt. Format nach
 
 ### Hinzugefügt
 - Dependabot hält Python-Abhängigkeiten (`uv`) und GitHub Actions wöchentlich aktuell.
-- Dieses Changelog.
+- Dieses Änderungsprotokoll (`CHANGELOG.md`).
 
 ## [0.1.0] – 2026-11-02
 
