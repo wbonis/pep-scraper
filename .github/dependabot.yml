@@ -1,0 +1,28 @@
+version: 2
+updates:
+  # Python-Abhängigkeiten (pyproject.toml / uv.lock)
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      python-dev:
+        dependency-type: "development"
+      python-runtime:
+        dependency-type: "production"
+    commit-message:
+      prefix: "chore"
+
+  # GitHub Actions (SHA-gepinnt, Dependabot aktualisiert SHA und Versionskommentar)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
