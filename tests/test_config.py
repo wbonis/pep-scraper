@@ -4,7 +4,11 @@ import pytest
 
 from pep_scraper.config import Config, ConfigError, load_config
 
-BASE = {"PEP_USERNAME": "user", "PEP_PASSWORD": "pw"}
+BASE = {
+    "PEP_USERNAME": "user",
+    "PEP_PASSWORD": "pw",
+    "PEP_BASE_URL": "https://example.pi-asp.de",
+}
 
 
 def test_defaults() -> None:
@@ -12,7 +16,7 @@ def test_defaults() -> None:
     assert cfg == Config(
         username="user",
         password="pw",
-        base_url="https://harzklinikum.pi-asp.de",
+        base_url="https://example.pi-asp.de",
         output=Path("dienstplan.ics"),
         headless=True,
         timeout_ms=60_000,
@@ -39,7 +43,7 @@ def test_overrides() -> None:
     assert cfg.tz_name == "UTC"
 
 
-@pytest.mark.parametrize("missing", ["PEP_USERNAME", "PEP_PASSWORD"])
+@pytest.mark.parametrize("missing", ["PEP_USERNAME", "PEP_PASSWORD", "PEP_BASE_URL"])
 def test_missing_credentials(missing: str) -> None:
     env = {k: v for k, v in BASE.items() if k != missing}
     with pytest.raises(ConfigError, match=missing):
@@ -56,7 +60,7 @@ def test_password_not_in_repr() -> None:
 
 
 @pytest.mark.parametrize(
-    "url", ["http://harzklinikum.pi-asp.de", "ftp://x", "harzklinikum.pi-asp.de"]
+    "url", ["http://example.pi-asp.de", "ftp://x", "example.pi-asp.de"]
 )
 def test_non_https_base_url_rejected(url: str) -> None:
     with pytest.raises(ConfigError, match="PEP_BASE_URL"):

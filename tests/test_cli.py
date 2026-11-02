@@ -65,7 +65,9 @@ def test_main_uses_env(
 ) -> None:
     out = tmp_path / "x.ics"
     (tmp_path / ".env").write_text(
-        f"PEP_USERNAME=u\nPEP_PASSWORD=p\nPEP_OUTPUT={out}\n", encoding="utf-8"
+        f"PEP_USERNAME=u\nPEP_PASSWORD=p\nPEP_BASE_URL=https://example.pi-asp.de\n"
+        f"PEP_OUTPUT={out}\n",
+        encoding="utf-8",
     )
     monkeypatch.delenv("PEP_USERNAME", raising=False)
     monkeypatch.delenv("PEP_PASSWORD", raising=False)

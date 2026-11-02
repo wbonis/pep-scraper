@@ -1,6 +1,6 @@
 # pep-scraper
 
-Holt den eigenen PEP-Dienstplan aus P&I LOGA3 (`harzklinikum.pi-asp.de`), schreibt ihn als ICS-Datei
+Holt den eigenen PEP-Dienstplan aus P&I LOGA3 (z. B. `https://<mandant>.pi-asp.de`), schreibt ihn als ICS-Datei
 und überträgt ihn auf Wunsch in den Schichtplan einer [Yuvomi](https://github.com/ulsklyc/yuvomi)-Instanz.
 
 Das Tool meldet sich mit einem unsichtbaren Chromium (Playwright) an und liest das JSON, das das Dashboard
@@ -12,7 +12,7 @@ HTML ausgewertet; Sitzung und XSRF-Token verwaltet LOGA selbst.
 ```sh
 uv sync
 uv run playwright install chromium
-cp .env.example .env && chmod 600 .env   # PEP_USERNAME / PEP_PASSWORD eintragen
+cp .env.example .env && chmod 600 .env   # PEP_BASE_URL, PEP_USERNAME, PEP_PASSWORD eintragen
 ```
 
 ## Aufruf

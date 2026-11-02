@@ -7,7 +7,6 @@ from urllib.parse import urlsplit
 
 from .yuvomi_plan import AbsenceMode
 
-DEFAULT_BASE_URL = "https://harzklinikum.pi-asp.de"
 DEFAULT_OUTPUT = "dienstplan.ics"
 DEFAULT_TIMEOUT_MS = 60_000
 DEFAULT_TZ = "Europe/Berlin"
@@ -47,7 +46,7 @@ def load_config(env: Mapping[str, str]) -> Config:
     return Config(
         username=_required(env, "PEP_USERNAME"),
         password=_required(env, "PEP_PASSWORD"),
-        base_url=_base_url(env.get("PEP_BASE_URL", DEFAULT_BASE_URL), "PEP_BASE_URL"),
+        base_url=_base_url(_required(env, "PEP_BASE_URL"), "PEP_BASE_URL"),
         output=Path(env.get("PEP_OUTPUT", DEFAULT_OUTPUT)),
         headless=_bool(env, "PEP_HEADLESS", default=True),
         timeout_ms=_int(env, "PEP_TIMEOUT_MS", DEFAULT_TIMEOUT_MS),
