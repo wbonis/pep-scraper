@@ -43,7 +43,7 @@ def _parse_entry(raw: Mapping[str, Any]) -> Iterator[RosterEvent]:
 
 
 def _is_plan(raw: Mapping[str, Any]) -> bool:
-    """Known plan type, or no type at all but a shift list (seen for 2026-12-31)."""
+    """Known plan type, or no type at all but a shift list (defensive)."""
     kind = raw.get("type")
     if kind is None:
         return isinstance(raw.get("shifts"), list)

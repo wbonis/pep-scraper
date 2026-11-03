@@ -239,7 +239,7 @@ HOLIDAY_AND_SHIFT = {
             "afternoon": False,
         },
         {
-            "title": "Internistisches Zentrum → Station 18",
+            "title": "Abteilung A → Station 1",
             "date": "2026-12-31",
             "absence": False,
             "type": "SPEP_PLAN",

@@ -20,7 +20,7 @@ def _shift(day: int, start: int = 13, end: int = 22, code: str = "S006") -> Rost
     return RosterEvent(
         uid=f"s{day}",
         summary=f"{code} {start:02d}:00-{end:02d}:00",
-        description="Station 18",
+        description="Station 1",
         start=begin,
         end=finish,
         all_day=False,
@@ -164,7 +164,7 @@ def test_break_only_above_threshold() -> None:
 def test_break_info_keeps_times() -> None:
     (event,) = apply_break((_shift(5),), BreakRule(30, timedelta(0), "info"))
     assert event.end == datetime(2026, 12, 5, 22, 0)
-    assert event.description == "Station 18\nNetto 8:30 Std."
+    assert event.description == "Station 1\nNetto 8:30 Std."
 
 
 def test_break_skips_free_absence_and_credit() -> None:

@@ -93,7 +93,7 @@ def test_event_kinds_codes_and_colors(dashboard_json: dict[str, Any]) -> None:
 
 
 def test_plan_entry_without_type_is_parsed() -> None:
-    """Excerpt as reported for 2026-12-31: shifts list, no 'type' field."""
+    """Plan entry with a shifts list but no 'type' field."""
     payload = {
         "events": [
             {
@@ -104,11 +104,11 @@ def test_plan_entry_without_type_is_parsed() -> None:
                 "afternoon": False,
             },
             {
-                "title": "Internistisches Zentrum → Planer Station 18 Kardiologie",
+                "title": "Abteilung A → Planer Station 1",
                 "date": "2026-12-31",
                 "absence": False,
-                "objektId": "1003.17",
-                "objektMan": "HKL",
+                "objektId": "1000.01",
+                "objektMan": "XYZ",
                 "shifts": [
                     {
                         "from": "2026-12-31T13:45:00",
