@@ -8,11 +8,17 @@ the GWT session/xsrf handling.
 import json
 import logging
 import time
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
+from playwright.sync_api import (
+    BrowserContext,
+)
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page, Response, sync_playwright
+from playwright.sync_api import Page, Playwright, Response, sync_playwright
 
+from .browser_cache import browser_args, prepare_profile, scrub_profile
 from .config import Config
 
 log = logging.getLogger(__name__)
@@ -67,16 +73,51 @@ CHALLENGES: tuple[tuple[str, type[LoginError], str], ...] = (
 def fetch_dashboard(cfg: Config) -> dict[str, Any]:
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=cfg.headless)
+            context, close = _open_context(pw, cfg)
             try:
-                context = browser.new_context(locale="de-DE")
                 page = context.new_page()
                 page.set_default_timeout(cfg.timeout_ms)
                 return _login_and_capture(page, cfg)
             finally:
-                browser.close()
+                close()
     except PlaywrightError as exc:
         raise FetchError(f"Browser-Fehler: {exc}") from exc
+
+
+def _open_context(
+    pw: Playwright, cfg: Config
+) -> tuple[BrowserContext, Callable[[], None]]:
+    """Persistent profile (keeps LOGA's app code cached) or a throwaway one.
+
+    The profile is scrubbed to its HTTP/code cache before (prepare_profile)
+    and after each run, so no cookie, storage or service worker survives.
+    """
+    profile = prepare_profile(cfg.cache_dir) if cfg.cache_dir is not None else None
+    if profile is None:
+        browser = pw.chromium.launch(headless=cfg.headless)
+        return browser.new_context(locale="de-DE"), browser.close
+    context = pw.chromium.launch_persistent_context(
+        profile,
+        headless=cfg.headless,
+        locale="de-DE",
+        args=browser_args(),
+        service_workers="block",
+    )
+
+    def close() -> None:
+        try:
+            context.close()
+        finally:
+            _scrub_after_run(profile)
+
+    return context, close
+
+
+def _scrub_after_run(profile: Path) -> None:
+    try:
+        scrub_profile(profile)
+    except OSError as exc:  # next run scrubs again before starting
+        log.warning("Browser-Profil %s nicht bereinigt: %s", profile, exc)
 
 
 def _login_and_capture(page: Page, cfg: Config) -> dict[str, Any]:

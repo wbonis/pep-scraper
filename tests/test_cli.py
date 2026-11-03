@@ -345,3 +345,98 @@ def test_new_code_write_error_does_not_stop_run(
     cfg = _config(tmp_path)
     assert cli.run(cfg, fetcher=lambda _c: dashboard_json) == 0
     assert cfg.output.exists()
+
+
+def _env_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    out = tmp_path / "x.ics"
+    (tmp_path / ".env").write_text(
+        "PEP_USERNAME=u\nPEP_PASSWORD=p\nPEP_BASE_URL=https://example.pi-asp.de\n"
+        f"PEP_OUTPUT={out}\nPEP_CACHE_DIR=off\n",
+        encoding="utf-8",
+    )
+    for key in ("PEP_USERNAME", "PEP_PASSWORD", "PEP_OUTPUT", "YUVOMI_BASE_URL"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.chdir(tmp_path)
+    return out
+
+
+def test_save_json_then_replay_without_loga(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, dashboard_json: dict[str, Any]
+) -> None:
+    import json
+
+    out = _env_dir(tmp_path, monkeypatch)
+    saved = tmp_path / "loga.json"
+    monkeypatch.setattr(cli, "fetch_dashboard", lambda _cfg: dashboard_json)
+    assert cli.main(["--save-json", str(saved)]) == 0
+    assert json.loads(saved.read_text(encoding="utf-8")) == dashboard_json
+    assert saved.stat().st_mode & 0o777 == 0o600
+
+    def no_loga(_cfg: Config) -> dict[str, Any]:
+        raise AssertionError("LOGA must not be contacted")
+
+    monkeypatch.setattr(cli, "fetch_dashboard", no_loga)
+    out.unlink()
+    assert cli.main(["--from-json", str(saved)]) == 0
+    assert out.exists()
+
+
+def test_save_json_not_written_on_fetch_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _env_dir(tmp_path, monkeypatch)
+    saved = tmp_path / "loga.json"
+
+    def down(_cfg: Config) -> dict[str, Any]:
+        raise FetchError("down")
+
+    monkeypatch.setattr(cli, "fetch_dashboard", down)
+    assert cli.main(["--save-json", str(saved)]) == cli.EXIT_FETCH
+    assert not saved.exists()
+
+
+@pytest.mark.parametrize("content", [None, "kein json", "[1, 2]"])
+def test_from_json_bad_file_is_fetch_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content: str | None
+) -> None:
+    _env_dir(tmp_path, monkeypatch)
+    path = tmp_path / "loga.json"
+    if content is not None:
+        path.write_text(content, encoding="utf-8")
+    assert cli.main(["--from-json", str(path)]) == cli.EXIT_FETCH
+
+
+def test_from_and_save_json_exclusive() -> None:
+    with pytest.raises(SystemExit):
+        cli._parse_args(["--from-json", "a", "--save-json", "b"])
+
+
+def test_save_json_write_error_does_not_stop_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, dashboard_json: dict[str, Any]
+) -> None:
+    out = _env_dir(tmp_path, monkeypatch)
+    monkeypatch.setattr(cli, "fetch_dashboard", lambda _cfg: dashboard_json)
+    target = tmp_path / "is_a_dir"
+    target.mkdir()
+    assert cli.main(["--save-json", str(target)]) == 0
+    assert out.exists()
+
+
+def test_from_json_warns_when_old_and_not_dry_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    dashboard_json: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import json
+    import os
+
+    _env_dir(tmp_path, monkeypatch)
+    saved = tmp_path / "loga.json"
+    saved.write_text(json.dumps(dashboard_json), encoding="utf-8")
+    two_days_ago = saved.stat().st_mtime - 2 * 86400
+    os.utime(saved, (two_days_ago, two_days_ago))
+    cli.main(["--from-json", str(saved), "--dry-run"])
+    assert "Stunden alt" not in caplog.text
+    cli.main(["--from-json", str(saved)])
+    assert "48 Stunden alt" in caplog.text

@@ -21,7 +21,37 @@ cp .env.example .env && chmod 600 .env   # PEP_BASE_URL, PEP_USERNAME, PEP_PASSW
 uv run pep-scraper              # schreibt ./dienstplan.ics (und überträgt nach Yuvomi, falls eingerichtet)
 uv run pep-scraper --dry-run    # Yuvomi-Änderungen nur anzeigen
 uv run pep-scraper -v --env-file /pfad/zur/.env
+uv run pep-scraper --save-json ~/Library/Caches/pep-scraper/loga.json   # LOGA-Antwort zusätzlich speichern
+uv run pep-scraper --from-json ~/Library/Caches/pep-scraper/loga.json --dry-run   # ohne LOGA, Yuvomi testen
 ```
+
+`--from-json` führt alles nach dem Abruf aus (Regeln, Namen, ICS-Datei, Yuvomi) mit einer gespeicherten
+Antwort. So lässt sich der Yuvomi-Abgleich beliebig oft testen, ohne sich bei LOGA anzumelden. Die Datei
+enthält den Dienstplan samt Abwesenheitsgründen, wird deshalb nur für den eigenen Benutzer lesbar (`0600`)
+angelegt und gehört nicht ins Repo. `--save-json` schreibt nur nach erfolgreichem Abruf; klappt das
+Speichern nicht, läuft der Rest trotzdem. Ohne `--dry-run` überschreibt `--from-json` den Yuvomi-Plan mit
+dem gespeicherten Stand; ist die Datei älter als 24 Stunden, warnt das Tool.
+
+### Browser-Cache
+
+Nach der Anmeldung lädt LOGA rund 20 MB Programmcode (komprimiert). LOGA erlaubt, ihn 31 Tage
+zwischenzuspeichern. Das Tool nutzt dafür ein festes Chromium-Profil mit bis zu 1 GB Plattencache in
+`~/Library/Caches/pep-scraper/chromium` (macOS, nicht in Time Machine), sonst `$XDG_CACHE_HOME/pep-scraper`
+bzw. `~/.cache/pep-scraper` (`PEP_CACHE_DIR`, `off` schaltet ab). Ab dem zweiten Lauf kommt der Code von der
+Platte. Alte LOGA-Versionen räumt Chromium selbst ab.
+
+- Vor und nach jedem Lauf löscht das Tool alles im Profil außer dem HTTP-Cache und dem JavaScript-Code-Cache:
+  Cookies, Local/Session Storage, IndexedDB, Formulardaten, gespeicherte Kennwörter. Service Worker sind
+  gesperrt. Es bleibt also keine LOGA-Sitzung im Profil, auch nicht nach einem Absturz.
+- Der Cache liefert Programmcode in die angemeldete Sitzung. Deshalb gilt:
+  - Cache-Verzeichnis und Profil gehören dem eigenen Benutzer und sind privat (`0700`); zu offene eigene
+    Verzeichnisse werden auf `0700` gesetzt.
+  - Ein Profil, das nicht privat war oder ein Symlink ist, wird verworfen und neu angelegt.
+  - Liegt das Verzeichnis unter einem Ordner, den andere beschreiben können (ohne Sticky-Bit), läuft das
+    Tool mit Warnung ohne Cache.
+- Zwei gleichzeitige Läufe teilen sich das Profil nicht. Der zweite bricht mit Exit-Code `3` ab.
+- Der erste Lauf braucht auf langsamen Leitungen lange (bei 1,6 MB/s etwa eine Minute für den Code).
+  Deshalb wartet das Tool standardmäßig 180 s (`PEP_TIMEOUT_MS`).
 
 ### Exit-Codes
 
@@ -30,7 +60,7 @@ uv run pep-scraper -v --env-file /pfad/zur/.env
 | `0` | alles ok | – |
 | `1` | Konfiguration fehlt oder ist falsch | `.env` prüfen |
 | `2` | Anmeldung abgelehnt: Kennung/Kennwort falsch, Captcha, 2FA, Zugang gesperrt | Zugangsdaten prüfen, einmal im Browser anmelden |
-| `3` | Abruf fehlgeschlagen: Netz, LOGA-Wartung, Dienstplan nicht geladen | meist später erneut versuchen |
+| `3` | Abruf fehlgeschlagen: Netz, LOGA-Wartung, Dienstplan nicht geladen, `--from-json`-Datei unlesbar | meist später erneut versuchen; bei langsamer Leitung `PEP_TIMEOUT_MS` erhöhen |
 | `4` | LOGA liefert ein unbekanntes Format | LOGA wurde vermutlich aktualisiert, Tool anpassen |
 | `5` | Übertragung nach Yuvomi fehlgeschlagen | Token, URL, Rechte prüfen |
 | `6` | LOGA verlangt ein neues Kennwort | im Browser neues Kennwort vergeben, `PEP_PASSWORD` anpassen |

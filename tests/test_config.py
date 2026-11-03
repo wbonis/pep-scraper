@@ -1,8 +1,15 @@
+import sys
 from pathlib import Path
 
 import pytest
 
 from pep_scraper.config import Config, ConfigError, load_config
+
+DEFAULT_CACHE = (
+    Path.home() / "Library" / "Caches" / "pep-scraper"
+    if sys.platform == "darwin"
+    else Path.home() / ".cache" / "pep-scraper"
+)
 
 BASE = {
     "PEP_USERNAME": "user",
@@ -19,10 +26,31 @@ def test_defaults() -> None:
         base_url="https://example.pi-asp.de",
         output=Path("dienstplan.ics"),
         headless=True,
-        timeout_ms=60_000,
+        timeout_ms=180_000,
         tz_name="Europe/Berlin",
         names_file=Path("schichten.toml"),
+        cache_dir=DEFAULT_CACHE,
     )
+
+
+def test_cache_dir_from_xdg() -> None:
+    cfg = load_config({**BASE, "XDG_CACHE_HOME": "/var/c"})
+    assert cfg.cache_dir == Path("/var/c/pep-scraper")
+
+
+def test_relative_xdg_is_ignored() -> None:
+    cfg = load_config({**BASE, "XDG_CACHE_HOME": "rel/c"})
+    assert cfg.cache_dir == DEFAULT_CACHE
+
+
+def test_cache_dir_override_expands_home() -> None:
+    cfg = load_config({**BASE, "PEP_CACHE_DIR": "~/x"})
+    assert cfg.cache_dir == Path.home() / "x"
+
+
+@pytest.mark.parametrize("value", ["off", "0", "false", "no", " OFF "])
+def test_cache_dir_off(value: str) -> None:
+    assert load_config({**BASE, "PEP_CACHE_DIR": value}).cache_dir is None
 
 
 def test_overrides() -> None:

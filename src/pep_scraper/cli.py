@@ -1,8 +1,10 @@
 """Einstieg: Dienstplan holen, ICS schreiben, optional nach Yuvomi übertragen."""
 
 import argparse
+import json
 import logging
 import os
+import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from datetime import date
@@ -162,10 +164,68 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Yuvomi-Änderungen nur anzeigen, nichts schreiben",
     )
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
+        "--save-json",
+        metavar="DATEI",
+        help="LOGA-Antwort nach erfolgreichem Abruf hier speichern (0600)",
+    )
+    source.add_argument(
+        "--from-json",
+        metavar="DATEI",
+        help="ohne LOGA-Anmeldung eine mit --save-json gespeicherte Antwort nutzen",
+    )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="ausführliche Ausgabe (Debug)"
     )
     return parser.parse_args(argv)
+
+
+STALE_HOURS = 24
+
+
+def _fetcher(args: argparse.Namespace) -> Fetcher:
+    if args.from_json:
+        return _from_file(Path(args.from_json), warn_if_stale=not args.dry_run)
+    if args.save_json:
+        return _saving(fetch_dashboard, Path(args.save_json))
+    return fetch_dashboard
+
+
+def _from_file(path: Path, warn_if_stale: bool) -> Fetcher:
+    def load(_cfg: Config) -> dict[str, Any]:
+        log.info("lese LOGA-Antwort aus %s (keine Anmeldung)", path)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            age_hours = int((time.time() - path.stat().st_mtime) // 3600)
+        except (OSError, ValueError) as exc:
+            raise FetchError(f"{path} nicht lesbar: {exc}") from exc
+        if not isinstance(data, dict):
+            raise FetchError(f"{path} enthält kein JSON-Objekt")
+        if warn_if_stale and age_hours >= STALE_HOURS:
+            log.warning(
+                "%s ist %d Stunden alt - Yuvomi bekommt diesen alten Stand",
+                path,
+                age_hours,
+            )
+        return data
+
+    return load
+
+
+def _saving(fetcher: Fetcher, path: Path) -> Fetcher:
+    def fetch_and_save(cfg: Config) -> dict[str, Any]:
+        payload = fetcher(cfg)
+        text = json.dumps(payload, ensure_ascii=False, indent=2)
+        try:
+            write_private_atomic(path, text.encode("utf-8"))
+        except OSError as exc:  # saving is extra, the run goes on
+            log.warning("LOGA-Antwort nicht gespeichert: %s", exc)
+            return payload
+        log.info("LOGA-Antwort in %s gespeichert", path)
+        return payload
+
+    return fetch_and_save
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -182,4 +242,4 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as exc:
         log.error("Konfiguration: %s", exc)
         return EXIT_CONFIG
-    return run(cfg, fetcher=fetch_dashboard, dry_run=args.dry_run)
+    return run(cfg, fetcher=_fetcher(args), dry_run=args.dry_run)

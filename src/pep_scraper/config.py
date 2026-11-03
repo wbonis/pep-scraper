@@ -1,5 +1,6 @@
 """Konfiguration aus der Umgebung (.env)."""
 
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -8,11 +9,13 @@ from urllib.parse import urlsplit
 from .yuvomi_plan import AbsenceMode
 
 DEFAULT_OUTPUT = "dienstplan.ics"
-DEFAULT_TIMEOUT_MS = 60_000
+DEFAULT_TIMEOUT_MS = 180_000  # first run loads ~20 MB of LOGA app code
 DEFAULT_TZ = "Europe/Berlin"
 DEFAULT_STATE_FILE = ".pep-scraper-state.json"
 DEFAULT_NAMES_FILE = "schichten.toml"
 FALSE_VALUES = frozenset({"0", "false", "no"})
+OFF_VALUES = FALSE_VALUES | {"off"}
+CACHE_NAME = "pep-scraper"
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
@@ -40,6 +43,7 @@ class Config:
     tz_name: str
     names_file: Path = Path(DEFAULT_NAMES_FILE)
     yuvomi: YuvomiConfig | None = None
+    cache_dir: Path | None = None  # None = no browser cache
 
 
 def load_config(env: Mapping[str, str]) -> Config:
@@ -53,7 +57,22 @@ def load_config(env: Mapping[str, str]) -> Config:
         tz_name=env.get("PEP_TZ", DEFAULT_TZ),
         names_file=Path(env.get("PEP_NAMES_FILE", DEFAULT_NAMES_FILE)),
         yuvomi=_yuvomi(env),
+        cache_dir=_cache_dir(env),
     )
+
+
+def _cache_dir(env: Mapping[str, str]) -> Path | None:
+    raw = env.get("PEP_CACHE_DIR", "").strip()
+    if raw.lower() in OFF_VALUES:
+        return None
+    if raw:
+        return Path(raw).expanduser()
+    xdg = Path(env.get("XDG_CACHE_HOME", "").strip())
+    if xdg.is_absolute():  # XDG spec: ignore relative paths
+        return xdg / CACHE_NAME
+    if sys.platform == "darwin":  # excluded from Time Machine, unlike ~/.cache
+        return Path.home() / "Library" / "Caches" / CACHE_NAME
+    return Path.home() / ".cache" / CACHE_NAME
 
 
 def _yuvomi(env: Mapping[str, str]) -> YuvomiConfig | None:

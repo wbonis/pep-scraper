@@ -4,11 +4,12 @@ import json
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 SHIFT_PATH = "/loga3/private/api/dashboard/pep/loadShiftsDashboard"
+APP_PATH = "/loga3/bts/20261022020548484/L2Main/APPHASH.cache.js"
 
 LOGIN_HTML = """<!doctype html><html><body>
 <form action="/loga3/private/layout?action=afterlogin" method="post">
@@ -45,10 +46,11 @@ PASSWORD_CHANGE_HTML = """<!doctype html><html><body>
 <input type="password" id="newPwd"></body></html>"""
 
 DASHBOARD_HTML = """<!doctype html><html><body>Dashboard
-<script>
-fetch('/loga3/private/api/dashboard/common/loadSetting?xsrf=abc');
+<script src="{app_path}"></script></body></html>"""
+
+APP_JS = """fetch('/loga3/private/api/dashboard/common/loadSetting?xsrf=abc');
 fetch('{shift_path}?millis=1&xsrf=abc&securityId=TESTID');
-</script></body></html>"""
+"""
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,8 @@ class FakeOptions:
     shift_status: int = 200
     maintenance: bool = False
     password_expired: bool = False
+    hits: list[str] = field(default_factory=list)  # requested paths, in order
+    login_cookies: list[str] = field(default_factory=list)  # Cookie header on /loga3/
 
 
 def _handler(opts: FakeOptions) -> type[BaseHTTPRequestHandler]:
@@ -68,17 +72,23 @@ def _handler(opts: FakeOptions) -> type[BaseHTTPRequestHandler]:
         def log_message(self, *_args: Any) -> None:
             return
 
-        def _send(self, status: int, body: str, ctype: str) -> None:
+        def _send(
+            self, status: int, body: str, ctype: str, *extra: tuple[str, str]
+        ) -> None:
             data = body.encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
+            for name, value in extra:
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(data)
 
         def do_GET(self) -> None:  # noqa: N802
             path = self.path.split("?", 1)[0]
+            opts.hits.append(path)
             if path == "/loga3/":
+                opts.login_cookies.append(self.headers.get("Cookie", ""))
                 html = LOGIN_HTML.format(
                     captcha_style="" if opts.captcha_visible else hidden,
                     twofa_style="" if opts.twofa_visible else hidden,
@@ -88,8 +98,13 @@ def _handler(opts: FakeOptions) -> type[BaseHTTPRequestHandler]:
             elif path == "/loga3/private/layout" and opts.password_expired:
                 self._send(200, PASSWORD_CHANGE_HTML, "text/html")
             elif path == "/loga3/private/layout":
-                html = DASHBOARD_HTML.format(shift_path=SHIFT_PATH)
-                self._send(200, html, "text/html")
+                html = DASHBOARD_HTML.format(app_path=APP_PATH)
+                session = ("Set-Cookie", "JSESSIONID=abc; Path=/; Max-Age=3600")
+                self._send(200, html, "text/html", session)
+            elif path == APP_PATH:
+                js = APP_JS.format(shift_path=SHIFT_PATH)
+                immutable = ("Cache-Control", "max-age=2678400")
+                self._send(200, js, "application/javascript", immutable)
             elif path == SHIFT_PATH:
                 body = json.dumps(opts.payload) if opts.shift_status == 200 else "x"
                 self._send(opts.shift_status, body, "application/json")
