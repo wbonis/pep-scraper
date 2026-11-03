@@ -192,7 +192,14 @@ def _log_plan(plan: SchedulePlan, dry_run: bool) -> None:
     for spec in plan.create_types:
         log.info("%s: lege Schichttyp an: %s", prefix, spec.name)
     for type_id, spec in plan.update_types:
-        log.info("%s: benenne Schichttyp %d um: %s", prefix, type_id, spec.name)
+        log.info(
+            "%s: aktualisiere Schichttyp %d: %s %s-%s",
+            prefix,
+            type_id,
+            spec.name,
+            spec.start_time or "",
+            spec.end_time or "",
+        )
     for assignment in plan.put:
         label = "frei" if assignment.spec is None else assignment.spec.name
         log.info("%s: setze %s -> %s", prefix, assignment.day.isoformat(), label)

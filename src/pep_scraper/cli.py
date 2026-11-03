@@ -136,7 +136,7 @@ def _sync_yuvomi(
 
 def _log_summary(result: SyncResult, dry_run: bool) -> None:
     log.info(
-        "Yuvomi%s: %d Schichttypen angelegt, %d umbenannt, %d entfernt; "
+        "Yuvomi%s: %d Schichttypen angelegt, %d aktualisiert, %d entfernt; "
         "%d Tage gesetzt, %d entfernt; %d Zusatzdienste angelegt, %d entfernt",
         " (Probelauf)" if dry_run else "",
         result.created_types,
